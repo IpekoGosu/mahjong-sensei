@@ -1,0 +1,83 @@
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model Player {
+    id           String            @id @default(cuid())
+    accountId    Int               @unique
+    nickname     String
+    level        Int               @default(1)
+    createdAt    DateTime          @default(now())
+    updatedAt    DateTime          @updatedAt
+    participants GameParticipant[]
+
+    @@map("players")
+}
+
+model Game {
+    id           String            @id
+    roomType     String
+    gameDate     DateTime          @default(now())
+    rawProtobuf  Bytes?
+    createdAt    DateTime          @default(now())
+    updatedAt    DateTime          @updatedAt
+    participants GameParticipant[]
+    rounds       Round[]
+
+    @@map("games")
+}
+
+model GameParticipant {
+    id         String   @id @default(cuid())
+    gameId     String
+    playerId   String
+    seat       Int
+    finalScore Int
+    finalRank  Int
+    luckScore  Float
+    skillScore Float
+    createdAt  DateTime @default(now())
+
+    game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+    player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+    @@unique([gameId, seat])
+    @@map("game_participants")
+}
+
+model Round {
+    id           String        @id @default(cuid())
+    gameId       String
+    roundIndex   Int
+    honba        Int           @default(0)
+    riichiSticks Int           @default(0)
+    roundMetrics RoundMetric[]
+
+    game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+    @@map("rounds")
+}
+
+model RoundMetric {
+    id             String @id @default(cuid())
+    roundId        String
+    seat           Int
+    startShanten   Int
+    startDoraCount Int
+    drawLuckRatio  Float
+    uradoraHits    Int
+    dealInScore    Int
+    tsumoLossScore Int
+    tileEfficiency Float
+    luckScore      Float
+    skillScore     Float
+
+    round Round @relation(fields: [roundId], references: [id], onDelete: Cascade)
+
+    @@map("round_metrics")
+}
