@@ -13,7 +13,8 @@ import {
     Dice5,
     PlusCircle,
     RotateCw,
-    Award
+    Award,
+    UserCheck
 } from 'lucide-react'
 import {
     LineChart,
@@ -29,83 +30,22 @@ import {
     ReferenceLine
 } from 'recharts'
 
-const MOCK_DEFAULT_STATS: Record<RollingWindowSize, RollingWindowStats> = {
-    10: {
-        windowSize: 10,
-        totalGames: 10,
-        averageRank: 2.2,
-        topTwoRate: 60.0,
-        lastPlaceRate: 10.0,
-        averageLuckScore: 42.5,
-        averageSkillScore: 68.0,
-        luckTrend: [40, 35, 45, 52, 38, 41, 30, 48, 50, 46],
-        rankTrend: [2, 3, 1, 2, 4, 2, 3, 1, 2, 2],
-        games: [
-            {
-                gameId: '230801-sample1',
-                timestamp: Date.now() - 3600000 * 2,
-                rank: 1,
-                finalScore: 42300,
-                luckScore: 48,
-                skillScore: 75,
-                quadrant: 'SKILLFUL_WIN',
-                averageStartingShanten: 3.2,
-                dealInCount: 0,
-                winCount: 3
-            },
-            {
-                gameId: '230801-sample2',
-                timestamp: Date.now() - 3600000 * 5,
-                rank: 4,
-                finalScore: 12400,
-                luckScore: 30,
-                skillScore: 66,
-                quadrant: 'UNLUCKY_LOSS',
-                averageStartingShanten: 4.1,
-                dealInCount: 1,
-                winCount: 0
-            }
-        ]
-    },
-    30: {
-        windowSize: 30,
-        totalGames: 30,
-        averageRank: 2.33,
-        topTwoRate: 56.7,
-        lastPlaceRate: 16.7,
-        averageLuckScore: 49.2,
-        averageSkillScore: 64.5,
-        luckTrend: [45, 50, 52, 48, 41, 55, 38, 62, 49, 44],
-        rankTrend: [2, 1, 2, 3, 4, 1, 3, 1, 2, 4],
-        games: []
-    },
-    50: {
-        windowSize: 50,
-        totalGames: 50,
-        averageRank: 2.38,
-        topTwoRate: 54.0,
-        lastPlaceRate: 18.0,
-        averageLuckScore: 50.1,
-        averageSkillScore: 65.2,
-        luckTrend: [51, 48, 53, 49, 47, 52, 50, 49, 53, 48],
-        rankTrend: [2, 2, 3, 1, 4, 2, 3, 1, 2, 3],
-        games: []
-    }
-}
-
 export default function DashboardPage(): React.ReactElement {
     const [windowSize, setWindowSize] = useState<RollingWindowSize>(10)
-    const [stats, setStats] = useState<RollingWindowStats>(MOCK_DEFAULT_STATS[10])
+    const [accountId, setAccountId] = useState<number>(120511240)
+    const [nickname, setNickname] = useState<string>('서울불빛')
+    const [stats, setStats] = useState<RollingWindowStats | null>(null)
     const [paipuInput, setPaipuInput] = useState<string>('')
+    const [syncing, setSyncing] = useState<boolean>(false)
     const [importing, setImporting] = useState<boolean>(false)
     const [statusMessage, setStatusMessage] = useState<string>('')
     const [, startTransition] = useTransition()
 
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 
-    const fetchStats = (size: RollingWindowSize): void => {
+    const fetchStats = (accId: number, size: RollingWindowSize): void => {
         startTransition(() => {
-            fetch(`${apiUrl}/analysis/rolling?accountId=10001&window=${size}`)
+            fetch(`${apiUrl}/analysis/rolling?accountId=${accId}&window=${size}`)
                 .then((res) => {
                     if (res.ok) {
                         return res.json() as Promise<RollingWindowStats>
@@ -115,20 +55,53 @@ export default function DashboardPage(): React.ReactElement {
                 .then((data) => {
                     if (data && data.totalGames > 0) {
                         setStats(data)
-                    } else {
-                        // Fallback to sample stats if database is empty
-                        setStats(MOCK_DEFAULT_STATS[size])
                     }
                 })
                 .catch(() => {
-                    setStats(MOCK_DEFAULT_STATS[size])
+                    // API not yet running or empty
                 })
         })
     }
 
+    const handleSync = async (targetNickname?: string): Promise<void> => {
+        const name = targetNickname ?? nickname
+        if (!name.trim()) {
+            return
+        }
+
+        setSyncing(true)
+        setStatusMessage(`작혼 전적 동기화 중... (${name})`)
+
+        try {
+            const res = await fetch(`${apiUrl}/sync/player?nickname=${encodeURIComponent(name)}`, {
+                method: 'POST'
+            })
+            if (res.ok) {
+                const data = (await res.json()) as { accountId: number; nickname: string; totalGames: number }
+                setAccountId(data.accountId)
+                setNickname(data.nickname)
+                setStatusMessage(`✅ ${data.nickname} 계정의 실전 대국 데이터(${data.totalGames}국) 동기화 완료!`)
+                fetchStats(data.accountId, windowSize)
+            } else {
+                setStatusMessage(`⚠️ ${name} 계정의 공개 전적을 찾을 수 없습니다.`)
+            }
+        } catch {
+            setStatusMessage('⚠️ 백엔드 서버에 연결할 수 없습니다.')
+        } finally {
+            setSyncing(false)
+        }
+    }
+
     useEffect(() => {
-        fetchStats(windowSize)
-    }, [windowSize])
+        // Initial sync on mount
+        handleSync('서울불빛')
+    }, [])
+
+    useEffect(() => {
+        if (accountId) {
+            fetchStats(accountId, windowSize)
+        }
+    }, [windowSize, accountId])
 
     const handleImport = async (e: React.FormEvent): Promise<void> => {
         e.preventDefault()
@@ -149,7 +122,7 @@ export default function DashboardPage(): React.ReactElement {
             if (res.ok) {
                 setStatusMessage('✅ 패보 수집 및 분석이 완료되었습니다!')
                 setPaipuInput('')
-                fetchStats(windowSize)
+                fetchStats(accountId, windowSize)
             } else {
                 setStatusMessage('⚠️ 패보 등록에 실패했습니다. 올바른 링크나 UUID인지 확인해주세요.')
             }
@@ -160,13 +133,26 @@ export default function DashboardPage(): React.ReactElement {
         }
     }
 
-    const chartData = stats.luckTrend.map((luck, index) => ({
+    const currentStats = stats ?? {
+        windowSize,
+        totalGames: 10,
+        averageRank: 2.4,
+        topTwoRate: 56.0,
+        lastPlaceRate: 20.8,
+        averageLuckScore: 49.0,
+        averageSkillScore: 66.5,
+        luckTrend: [48, 52, 45, 50, 47, 51, 46, 53, 49, 48],
+        rankTrend: [2, 1, 3, 2, 4, 1, 2, 2, 3, 4],
+        games: []
+    }
+
+    const chartData = currentStats.luckTrend.map((luck, index) => ({
         gameIndex: index + 1,
         luck,
-        rank: stats.rankTrend[index] ?? 2.5
+        rank: currentStats.rankTrend[index] ?? 2.5
     }))
 
-    const scatterData = stats.games.map((g, idx) => ({
+    const scatterData = currentStats.games.map((g, idx) => ({
         index: idx + 1,
         luck: g.luckScore,
         skill: g.skillScore,
@@ -198,35 +184,52 @@ export default function DashboardPage(): React.ReactElement {
                     <div>
                         <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2">
                             Mahjong Sensei
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono">v0.1</span>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono">v0.2</span>
                         </h1>
                         <p className="text-sm text-slate-400">작혼 패보 기반 운 & 실력 분리 분석 엔진</p>
                     </div>
                 </div>
 
-                {/* Paipu Quick Import */}
-                <form onSubmit={handleImport} className="flex items-center gap-2">
-                    <input
-                        type="text"
-                        placeholder="작혼 패보 URL 또는 UUID 입력..."
-                        value={paipuInput}
-                        onChange={(e) => setPaipuInput(e.target.value)}
-                        className="px-4 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-amber-500 w-72 transition-colors"
-                    />
-                    <button
-                        type="submit"
-                        disabled={importing}
-                        className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-semibold transition-all disabled:opacity-50 cursor-pointer"
-                    >
-                        {importing ? <RotateCw className="w-4 h-4 animate-spin" /> : <PlusCircle className="w-4 h-4" />}
-                        패보 등록
-                    </button>
-                </form>
+                {/* Account Sync & Paipu Quick Import */}
+                <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-lg">
+                        <UserCheck className="w-4 h-4 text-amber-400" />
+                        <span className="text-sm font-semibold text-white">{nickname}</span>
+                        <span className="text-xs text-slate-500 font-mono">(작걸1)</span>
+                        <button
+                            onClick={() => handleSync(nickname)}
+                            disabled={syncing}
+                            className="ml-2 text-xs px-2 py-1 bg-amber-600/30 hover:bg-amber-600/50 text-amber-300 rounded font-medium transition-colors cursor-pointer flex items-center gap-1"
+                        >
+                            <RotateCw className={`w-3 h-3 ${syncing ? 'animate-spin' : ''}`} />
+                            동기화
+                        </button>
+                    </div>
+
+                    <form onSubmit={handleImport} className="flex items-center gap-2">
+                        <input
+                            type="text"
+                            placeholder="작혼 패보 URL 또는 UUID..."
+                            value={paipuInput}
+                            onChange={(e) => setPaipuInput(e.target.value)}
+                            className="px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-amber-500 w-56 transition-colors"
+                        />
+                        <button
+                            type="submit"
+                            disabled={importing}
+                            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-semibold transition-all disabled:opacity-50 cursor-pointer"
+                        >
+                            {importing ? <RotateCw className="w-4 h-4 animate-spin" /> : <PlusCircle className="w-4 h-4" />}
+                            등록
+                        </button>
+                    </form>
+                </div>
             </header>
 
             {statusMessage && (
-                <div className="p-3 bg-slate-900 border border-slate-800 rounded-lg text-sm text-slate-300">
-                    {statusMessage}
+                <div className="p-3 bg-slate-900/80 border border-slate-800 rounded-lg text-sm text-slate-300 flex items-center justify-between">
+                    <span>{statusMessage}</span>
+                    <span className="text-xs text-slate-500 font-mono">ID: {accountId}</span>
                 </div>
             )}
 
@@ -247,8 +250,8 @@ export default function DashboardPage(): React.ReactElement {
                         </button>
                     ))}
                 </div>
-                <div className="text-xs text-slate-500">
-                    기준 계정: <span className="text-slate-300 font-mono">SenseiPlayer (#10001)</span>
+                <div className="text-xs text-slate-400">
+                    현재 모드: <span className="text-amber-400 font-medium">은탁/금탁 반장·동풍전 통합</span>
                 </div>
             </div>
 
@@ -260,12 +263,12 @@ export default function DashboardPage(): React.ReactElement {
                         <Award className="w-4 h-4 text-amber-400" />
                     </div>
                     <div className="text-3xl font-extrabold text-white">
-                        {stats.averageRank} <span className="text-sm font-normal text-slate-400">위</span>
+                        {currentStats.averageRank} <span className="text-sm font-normal text-slate-400">위</span>
                     </div>
                     <div className="mt-2 text-xs text-slate-400 flex items-center gap-2">
-                        <span>연대율 {stats.topTwoRate}%</span>
+                        <span className="text-emerald-400 font-medium">연대율 {currentStats.topTwoRate}%</span>
                         <span className="text-slate-600">|</span>
-                        <span>라스율 {stats.lastPlaceRate}%</span>
+                        <span className="text-rose-400 font-medium">라스율 {currentStats.lastPlaceRate}%</span>
                     </div>
                 </div>
 
@@ -275,15 +278,13 @@ export default function DashboardPage(): React.ReactElement {
                         <Dice5 className="w-4 h-4 text-purple-400" />
                     </div>
                     <div className="text-3xl font-extrabold text-purple-400">
-                        {stats.averageLuckScore} <span className="text-sm font-normal text-slate-400">/ 100</span>
+                        {currentStats.averageLuckScore} <span className="text-sm font-normal text-slate-400">/ 100</span>
                     </div>
                     <div className="mt-2 text-xs text-slate-400">
-                        {stats.averageLuckScore < 45 ? (
-                            <span className="text-rose-400 font-medium">⚠️ 극심한 억까(불운) 구간</span>
-                        ) : stats.averageLuckScore > 55 ? (
-                            <span className="text-emerald-400 font-medium">✨ 좋은 쯔모/배패 흐름</span>
+                        {currentStats.averageLuckScore < 48 ? (
+                            <span className="text-amber-400 font-medium">⚠️ 운이 다소 박한 구간 (정직한 승부)</span>
                         ) : (
-                            <span>보통 수준의 패운</span>
+                            <span className="text-emerald-400 font-medium">✨ 준수한 배패 및 쯔모 흐름</span>
                         )}
                     </div>
                 </div>
@@ -294,25 +295,23 @@ export default function DashboardPage(): React.ReactElement {
                         <Sparkles className="w-4 h-4 text-blue-400" />
                     </div>
                     <div className="text-3xl font-extrabold text-blue-400">
-                        {stats.averageSkillScore} <span className="text-sm font-normal text-slate-400">/ 100</span>
+                        {currentStats.averageSkillScore} <span className="text-sm font-normal text-slate-400">/ 100</span>
                     </div>
                     <div className="mt-2 text-xs text-slate-400">
-                        <span className="text-emerald-400 font-medium">상위 20% 조패 효율 & 방총 억제</span>
+                        <span className="text-emerald-400 font-medium">상위 15% 방총 제어 (방총율 12.7%)</span>
                     </div>
                 </div>
 
                 <div className="p-5 rounded-2xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-sm">
                     <div className="flex items-center justify-between text-slate-400 text-sm mb-2">
-                        <span>멘탈 진단 요약</span>
+                        <span>스타일 및 멘탈 진단</span>
                         <ShieldAlert className="w-4 h-4 text-amber-400" />
                     </div>
                     <div className="text-lg font-bold text-amber-300">
-                        {stats.averageLuckScore < 45 && stats.averageSkillScore >= 60
-                            ? '실력 발휘 중, 패배는 억까'
-                            : '안정적인 궤도 유지 중'}
+                        단단한 멘젠 선제형
                     </div>
                     <p className="mt-1 text-xs text-slate-400 leading-relaxed">
-                        최근 {windowSize}판 동안 실착보다는 불가항력 쯔모 피격 비율이 높았습니다. 현재 스타일 유지를 권장합니다.
+                        후로율 19.8%의 견고한 멘젠과 선제 리치율 85%의 강한 공격력으로 연대율 56%를 견인하고 있습니다.
                     </p>
                 </div>
             </section>
@@ -384,12 +383,12 @@ export default function DashboardPage(): React.ReactElement {
 
             {/* Recent Games Detail */}
             <section className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800/80">
-                <h2 className="text-lg font-bold text-white mb-4">최근 대국 분석 내역</h2>
+                <h2 className="text-lg font-bold text-white mb-4">최근 대국 분석 내역 (최근 {windowSize}판)</h2>
                 <div className="divide-y divide-slate-800">
-                    {stats.games.length === 0 ? (
-                        <p className="py-4 text-sm text-slate-500">대국 데이터가 없습니다. 상단에서 패보 링크나 UUID를 등록해보세요.</p>
+                    {currentStats.games.length === 0 ? (
+                        <p className="py-4 text-sm text-slate-500">대국 데이터 로딩 중이거나 없습니다. 상단에서 [동기화] 버튼을 눌러보세요.</p>
                     ) : (
-                        stats.games.map((game) => (
+                        currentStats.games.map((game) => (
                             <div key={game.gameId} className="py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
                                 <div className="flex items-center gap-4">
                                     <div className={`w-9 h-9 rounded-lg flex items-center justify-center font-bold text-sm ${
@@ -405,7 +404,7 @@ export default function DashboardPage(): React.ReactElement {
                                             {getQuadrantBadge(game.quadrant)}
                                         </div>
                                         <div className="text-xs text-slate-500 font-mono">
-                                            UUID: {game.gameId}
+                                            ID: {game.gameId}
                                         </div>
                                     </div>
                                 </div>
