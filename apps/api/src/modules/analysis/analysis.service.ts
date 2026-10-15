@@ -23,7 +23,15 @@ export class AnalysisService {
                 player: { accountId }
             },
             include: {
-                game: true
+                game: {
+                    include: {
+                        rounds: {
+                            include: {
+                                roundMetrics: true
+                            }
+                        }
+                    }
+                }
             },
             orderBy: {
                 game: { gameDate: 'desc' }
@@ -69,6 +77,28 @@ export class AnalysisService {
 
             const quadrant: PerformanceQuadrant = this.metricCalc.classifyQuadrant(p.luckScore, p.skillScore)
 
+            // Compute per-game round metrics for player's seat
+            let totalShanten = 0
+            let myRoundsCount = 0
+            let dealInCount = 0
+            let winCount = 0
+
+            for (const round of p.game.rounds) {
+                const metric = round.roundMetrics.find((m) => m.seat === p.seat)
+                if (metric) {
+                    totalShanten += metric.startShanten
+                    myRoundsCount++
+                    if (metric.dealInScore > 0) {
+                        dealInCount++
+                    }
+                    if (metric.luckScore > 65) {
+                        winCount++
+                    }
+                }
+            }
+
+            const avgShanten = myRoundsCount > 0 ? Number((totalShanten / myRoundsCount).toFixed(1)) : 3.5
+
             games.push({
                 gameId: p.gameId,
                 timestamp: p.game.gameDate.getTime(),
@@ -77,9 +107,9 @@ export class AnalysisService {
                 luckScore: p.luckScore,
                 skillScore: p.skillScore,
                 quadrant,
-                averageStartingShanten: 3.4,
-                dealInCount: 1,
-                winCount: 2
+                averageStartingShanten: avgShanten,
+                dealInCount,
+                winCount
             })
 
             luckTrend.push(p.luckScore)

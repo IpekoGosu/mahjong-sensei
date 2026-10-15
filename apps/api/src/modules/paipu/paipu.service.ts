@@ -1,16 +1,20 @@
-import { Injectable, BadRequestException } from '@nestjs/common'
+import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../../prisma/prisma.service'
-import { MetricCalculator } from '@mahjong-sensei/mahjong-core'
+import {
+    PaipuParser,
+    MajsoulGameRecord,
+    SAMPLE_MAJSOUL_GAME
+} from '@mahjong-sensei/mahjong-core'
+import { PaipuDetail } from '@mahjong-sensei/types'
 
 @Injectable()
 export class PaipuService {
-    private readonly metricCalc: MetricCalculator = new MetricCalculator()
+    private readonly parser: PaipuParser = new PaipuParser()
 
     public constructor(private readonly prisma: PrismaService) {}
 
     public extractUuid(input: string): string {
         /*_ GEMINI THINKING _*/
-        // Handles full URLs (e.g., https://mahjongsoul.game.yo-star.com/?paipu=230801-xxxx) or pure UUIDs
         if (input.includes('paipu=')) {
             const urlParts = input.split('paipu=')
             const candidate = urlParts[1]?.split('&')[0]
@@ -36,54 +40,128 @@ export class PaipuService {
             return { success: true, gameId: existing.id }
         }
 
-        // Mock game creation for initial Phase 1 pipeline verification
-        const defaultPlayer = await this.prisma.player.upsert({
-            where: { accountId: 10001 },
-            update: {},
-            create: {
-                accountId: 10001,
-                nickname: 'SenseiPlayer',
-                level: 3
+        /*_ GEMINI THINKING _*/
+        // Build game record from sample/parsed payload with the requested UUID
+        const gameRecord: MajsoulGameRecord = {
+            ...SAMPLE_MAJSOUL_GAME,
+            uuid,
+            timestamp: Date.now()
+        }
+
+        const parsed = this.parser.parseGameRecord(gameRecord)
+
+        // Save Players, Game, Participants, Rounds and RoundMetrics in a transaction
+        await this.prisma.$transaction(async (tx) => {
+            // Upsert players
+            const playerMap = new Map<number, string>()
+            for (const p of parsed.detail.players) {
+                const playerRecord = await tx.player.upsert({
+                    where: { accountId: p.accountId },
+                    update: { nickname: p.nickname },
+                    create: {
+                        accountId: p.accountId,
+                        nickname: p.nickname,
+                        level: 3
+                    }
+                })
+                playerMap.set(p.accountId, playerRecord.id)
             }
-        })
 
-        const calculatedLuck = this.metricCalc.calculateRoundLuckScore({
-            startingHand: ['1m', '2m', '3m', '4p', '5p', '6p', '7s', '8s', '9s', '1z', '1z', '2z', '2z', '3z'],
-            doraIndicators: ['5m'],
-            drawCount: 12,
-            effectiveDrawCount: 6,
-            uradoraCount: 1,
-            unavoidableDamage: 0
-        })
+            // Create Game
+            const game = await tx.game.create({
+                data: {
+                    id: uuid,
+                    roomType: parsed.detail.roomName,
+                    gameDate: new Date(parsed.detail.timestamp)
+                }
+            })
 
-        const calculatedSkill = this.metricCalc.calculateRoundSkillScore({
-            actionsCount: 12,
-            optimalDiscardCount: 11,
-            didDealIn: false,
-            dealInScore: 0,
-            isRiichiDiscard: false
-        })
-
-        const game = await this.prisma.game.create({
-            data: {
-                id: uuid,
-                roomType: '옥탁 반장전 (Jade South)',
-                gameDate: new Date(),
-                participants: {
-                    create: [
-                        {
-                            playerId: defaultPlayer.id,
-                            seat: 0,
-                            finalScore: 38200,
-                            finalRank: 1,
-                            luckScore: calculatedLuck,
-                            skillScore: calculatedSkill
+            // Create Game Participants
+            for (const p of parsed.detail.players) {
+                const playerId = playerMap.get(p.accountId)
+                if (playerId) {
+                    await tx.gameParticipant.create({
+                        data: {
+                            gameId: game.id,
+                            playerId,
+                            seat: p.seat,
+                            finalScore: p.finalScore,
+                            finalRank: p.rank,
+                            luckScore: p.luckScore,
+                            skillScore: p.skillScore
                         }
-                    ]
+                    })
+                }
+            }
+
+            // Create Rounds and RoundMetrics
+            for (const round of parsed.detail.rounds) {
+                const createdRound = await tx.round.create({
+                    data: {
+                        gameId: game.id,
+                        roundIndex: round.roundIndex,
+                        honba: round.honba,
+                        riichiSticks: round.riichiSticks
+                    }
+                })
+
+                const roundMetrics = parsed.roundMetrics.filter((m) => m.roundIndex === round.roundIndex)
+                for (const m of roundMetrics) {
+                    await tx.roundMetric.create({
+                        data: {
+                            roundId: createdRound.id,
+                            seat: m.seat,
+                            startShanten: m.startShanten,
+                            startDoraCount: m.startDoraCount,
+                            drawLuckRatio: m.drawLuckRatio,
+                            uradoraHits: m.uradoraHits,
+                            dealInScore: m.dealInScore,
+                            tsumoLossScore: m.tsumoLossScore,
+                            tileEfficiency: m.tileEfficiency,
+                            luckScore: m.luckScore,
+                            skillScore: m.skillScore
+                        }
+                    })
                 }
             }
         })
 
-        return { success: true, gameId: game.id }
+        return { success: true, gameId: uuid }
+    }
+
+    public async getPaipuDetail(gameId: string): Promise<PaipuDetail> {
+        const game = await this.prisma.game.findUnique({
+            where: { id: gameId },
+            include: {
+                participants: {
+                    include: { player: true }
+                },
+                rounds: {
+                    include: { roundMetrics: true }
+                }
+            }
+        })
+
+        if (!game) {
+            throw new NotFoundException(`Paipu with id ${gameId} not found`)
+        }
+
+        const players = game.participants.map((p) => ({
+            accountId: p.player.accountId,
+            nickname: p.player.nickname,
+            seat: p.seat as 0 | 1 | 2 | 3,
+            rank: p.finalRank,
+            finalScore: p.finalScore,
+            luckScore: p.luckScore,
+            skillScore: p.skillScore
+        }))
+
+        return {
+            id: game.id,
+            roomName: game.roomType,
+            timestamp: game.gameDate.getTime(),
+            players,
+            rounds: []
+        }
     }
 }
