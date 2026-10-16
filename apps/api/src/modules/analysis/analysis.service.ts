@@ -73,12 +73,14 @@ export class AnalysisService {
         const luckTrend: number[] = []
         const rankTrend: number[] = []
 
+        const lastRank = mode === '3p' ? 3 : 4
+
         for (const p of participants) {
             totalRank += p.finalRank
             if (p.finalRank <= 2) {
                 topTwoCount++
             }
-            if (p.finalRank === 4) {
+            if (p.finalRank === lastRank) {
                 lastPlaceCount++
             }
             totalLuck += p.luckScore
@@ -128,14 +130,15 @@ export class AnalysisService {
         const count = participants.length
         return {
             windowSize,
+            gameMode: mode,
             totalGames: count,
             averageRank: Number((totalRank / count).toFixed(2)),
             topTwoRate: Number(((topTwoCount / count) * 100).toFixed(1)),
             lastPlaceRate: Number(((lastPlaceCount / count) * 100).toFixed(1)),
             averageLuckScore: Number((totalLuck / count).toFixed(1)),
             averageSkillScore: Number((totalSkill / count).toFixed(1)),
-            luckTrend,
-            rankTrend,
+            luckTrend: [...luckTrend].reverse(),
+            rankTrend: [...rankTrend].reverse(),
             games
         }
     }

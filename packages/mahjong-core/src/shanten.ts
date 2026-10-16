@@ -8,8 +8,6 @@ const YAOJUU_INDICES: readonly number[] = [
 ]
 
 export class ShantenCalculator {
-    private bestShanten: number = 8
-
     public calculate(tiles: readonly string[]): number {
         const counts = TileConverter.handToCountArray(tiles)
         const regular = this.calculateRegular(counts)
@@ -59,29 +57,30 @@ export class ShantenCalculator {
 
     public calculateRegular(counts: readonly number[]): number {
         const countsCopy = [...counts]
-        this.bestShanten = 8
+        const state = { bestShanten: 8 }
 
         // Try using each tile as the pair (head)
         for (let i = 0; i < TILE_COUNT; i++) {
             const count = countsCopy[i] ?? 0
             if (count >= 2) {
                 countsCopy[i] = count - 2
-                this.searchMelds(countsCopy, 0, 1, 0)
+                this.searchMelds(countsCopy, 0, 1, 0, state)
                 countsCopy[i] = count
             }
         }
 
         // Try without a pair
-        this.searchMelds(countsCopy, 0, 0, 0)
+        this.searchMelds(countsCopy, 0, 0, 0, state)
 
-        return this.bestShanten
+        return state.bestShanten
     }
 
     private searchMelds(
         counts: number[],
         index: number,
         pairs: number,
-        melds: number
+        melds: number,
+        state: { bestShanten: number }
     ): void {
         /*_ GEMINI THINKING _*/
         // Skip tiles with 0 count
@@ -97,8 +96,8 @@ export class ShantenCalculator {
                 totalMelds = 4
             }
             const currentShanten = 8 - (melds * 2) - (totalMelds - melds) - pairs
-            if (currentShanten < this.bestShanten) {
-                this.bestShanten = currentShanten
+            if (currentShanten < state.bestShanten) {
+                state.bestShanten = currentShanten
             }
             return
         }
@@ -108,7 +107,7 @@ export class ShantenCalculator {
         // 1. Try Koutsu (Triplet)
         if (count >= 3) {
             counts[index] = count - 3
-            this.searchMelds(counts, index, pairs, melds + 1)
+            this.searchMelds(counts, index, pairs, melds + 1, state)
             counts[index] = count
         }
 
@@ -122,7 +121,7 @@ export class ShantenCalculator {
                 counts[index] = count - 1
                 counts[index + 1] = next1 - 1
                 counts[index + 2] = next2 - 1
-                this.searchMelds(counts, index, pairs, melds + 1)
+                this.searchMelds(counts, index, pairs, melds + 1, state)
                 counts[index] = count
                 counts[index + 1] = next1
                 counts[index + 2] = next2
@@ -130,7 +129,7 @@ export class ShantenCalculator {
         }
 
         // 3. Skip current tile without forming a full meld
-        this.searchMelds(counts, index + 1, pairs, melds)
+        this.searchMelds(counts, index + 1, pairs, melds, state)
     }
 
     private countPartials(counts: readonly number[]): number {

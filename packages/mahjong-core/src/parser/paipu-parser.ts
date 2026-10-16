@@ -46,6 +46,7 @@ export class PaipuParser {
             tileEfficiency: number
         }[] = []
 
+        const playerCount = (record.players.length === 3 || record.roomType.includes('3인')) ? 3 : 4
         const playerTotalLuck = [0, 0, 0, 0]
         const playerTotalSkill = [0, 0, 0, 0]
         const roundCount = record.rounds.length || 1
@@ -58,7 +59,7 @@ export class PaipuParser {
                 continue
             }
 
-            for (let seat = 0; seat < 4; seat++) {
+            for (let seat = 0; seat < playerCount; seat++) {
                 const s = seat as SeatIndex
                 const luckMetric = this.luckEvaluator.evaluateRound(round, s)
                 const skillMetric = this.skillEvaluator.evaluateRound(round, s)
@@ -85,21 +86,23 @@ export class PaipuParser {
         }
 
         // Calculate final scores and ranks
+        const defaultScore = playerCount === 3 ? 35000 : 25000
         const lastRound = record.rounds[record.rounds.length - 1]
-        const finalScores = lastRound ? [...lastRound.header.scores] : [25000, 25000, 25000, 25000]
+        const finalScores = lastRound ? [...lastRound.header.scores] : [defaultScore, defaultScore, defaultScore, defaultScore]
 
         // Rank determination (tie-breaking by seat order)
-        const rankedSeats: SeatIndex[] = ([0, 1, 2, 3] as SeatIndex[]).sort((a, b) => {
-            const scoreA = finalScores[a] ?? 25000
-            const scoreB = finalScores[b] ?? 25000
+        const validSeats = (playerCount === 3 ? [0, 1, 2] : [0, 1, 2, 3]) as SeatIndex[]
+        const rankedSeats: SeatIndex[] = validSeats.sort((a, b) => {
+            const scoreA = finalScores[a] ?? defaultScore
+            const scoreB = finalScores[b] ?? defaultScore
             if (scoreB !== scoreA) {
                 return scoreB - scoreA
             }
             return a - b
         })
 
-        const seatRanks = [1, 2, 3, 4]
-        for (let r = 0; r < 4; r++) {
+        const seatRanks = playerCount === 3 ? [1, 2, 3] : [1, 2, 3, 4]
+        for (let r = 0; r < playerCount; r++) {
             const seat = rankedSeats[r]
             if (seat !== undefined) {
                 seatRanks[seat] = r + 1

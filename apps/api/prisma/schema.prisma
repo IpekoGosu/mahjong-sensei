@@ -47,6 +47,7 @@ model GameParticipant {
     player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
 
     @@unique([gameId, seat])
+    @@index([playerId])
     @@map("game_participants")
 }
 

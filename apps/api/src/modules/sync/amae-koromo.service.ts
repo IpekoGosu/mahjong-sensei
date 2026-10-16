@@ -10,6 +10,7 @@ interface AmaeSearchResult {
         readonly score: number
         readonly delta: number
     }
+    readonly latest_timestamp?: number
 }
 
 interface AmaeExtendedStats {
@@ -190,22 +191,62 @@ export class AmaeKoromoService {
                 }
             })
 
+            const baseTimestamp = found.latest_timestamp ? found.latest_timestamp * 1000 : now
+
             for (let i = 0; i < gameCount; i++) {
                 const gameId = `amae-sync-${mode}-${accountId}-${i + 1}`
                 const rank = distributedRanks[i] ?? 2
                 const finalScore = avgScores[rank - 1] ?? (mode === '3p' ? 30000 : 25000)
 
+                // Realistic correlation between rank, luck, and skill
+                let rankBiasLuck = 0
+                let rankBiasSkill = 0
+
+                if (mode === '3p') {
+                    if (rank === 1) {
+                        rankBiasLuck = 12
+                        rankBiasSkill = 8
+                    } else if (rank === 2) {
+                        rankBiasLuck = -2
+                        rankBiasSkill = 2
+                    } else {
+                        // 3rd place (last): either unlucky damage or misplay
+                        const isBadLuck = (i % 2 === 0)
+                        rankBiasLuck = isBadLuck ? -22 : -10
+                        rankBiasSkill = isBadLuck ? 2 : -20
+                    }
+                } else {
+                    if (rank === 1) {
+                        rankBiasLuck = 14
+                        rankBiasSkill = 10
+                    } else if (rank === 2) {
+                        rankBiasLuck = 4
+                        rankBiasSkill = 4
+                    } else if (rank === 3) {
+                        rankBiasLuck = -6
+                        rankBiasSkill = -4
+                    } else {
+                        // 4th place (last): either severe bad luck or deal-in mistakes
+                        const isBadLuck = (i % 2 === 0)
+                        rankBiasLuck = isBadLuck ? -24 : -12
+                        rankBiasSkill = isBadLuck ? 0 : -22
+                    }
+                }
+
                 // Variance in luck/skill per game around the recent average
-                const varianceLuck = ((i * 7 + 3) % 11) - 5
-                const varianceSkill = ((i * 5 + 2) % 9) - 4
-                const gameLuck = Math.max(15, Math.min(95, luckScore + varianceLuck * 2))
-                const gameSkill = Math.max(20, Math.min(95, skillScore + varianceSkill * 2))
+                const varianceLuck = ((i * 7 + 3) % 7) - 3
+                const varianceSkill = ((i * 5 + 2) % 7) - 3
+                const gameLuck = Math.max(10, Math.min(95, luckScore + rankBiasLuck + varianceLuck * 2))
+                const gameSkill = Math.max(10, Math.min(95, skillScore + rankBiasSkill + varianceSkill * 2))
+
+                // Realistic start timestamp stepped back from latest match
+                const matchTime = new Date(baseTimestamp - (gameCount - 1 - i) * 3600000 * 2.5)
 
                 await tx.game.create({
                     data: {
                         id: gameId,
                         roomType: mode === '3p' ? '3인 마작 반장/동풍전' : '4인 마작 반장/동풍전',
-                        gameDate: new Date(now - (gameCount - i) * 3600000 * 3), // Every 3 hours
+                        gameDate: matchTime,
                         participants: {
                             create: {
                                 playerId: player.id,

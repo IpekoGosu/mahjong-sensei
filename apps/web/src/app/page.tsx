@@ -19,7 +19,8 @@ import {
     Users,
     Flame,
     FileText,
-    HelpCircle
+    HelpCircle,
+    Clock
 } from 'lucide-react'
 import {
     LineChart,
@@ -210,11 +211,30 @@ export default function DashboardPage(): React.ReactElement {
             }
     )
 
-    const chartData = currentStats.luckTrend.map((luck, index) => ({
-        gameIndex: index + 1,
-        luck,
-        rank: currentStats.rankTrend[index] ?? (gameMode === '3p' ? 2 : 2.5)
-    }))
+    const formatTimestamp = (timestamp?: number): string => {
+        if (!timestamp) {
+            return '-'
+        }
+        const d = new Date(timestamp)
+        return d.toLocaleString('ko-KR', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        })
+    }
+
+    const chartData = currentStats.luckTrend.map((luck, index) => {
+        const game = currentStats.games[currentStats.games.length - 1 - index]
+        return {
+            gameIndex: index + 1,
+            timeStr: game ? formatTimestamp(game.timestamp) : `대국 ${index + 1}`,
+            luck,
+            rank: currentStats.rankTrend[index] ?? (gameMode === '3p' ? 2 : 2.5)
+        }
+    })
 
     const scatterData = currentStats.games.map((g, idx) => ({
         index: idx + 1,
@@ -224,16 +244,49 @@ export default function DashboardPage(): React.ReactElement {
         rank: g.rank
     }))
 
-    const getQuadrantBadge = (quadrant: PerformanceQuadrant): React.ReactElement => {
+    const totalGamesForQuadrant = currentStats.games.length
+    const quadrantCounts: Record<PerformanceQuadrant, number> = {
+        SKILLFUL_WIN: 0,
+        UNLUCKY_LOSS: 0,
+        SLUMP_LOSS: 0,
+        LUCKY_FLUKE: 0
+    }
+
+    for (const g of currentStats.games) {
+        quadrantCounts[g.quadrant] = (quadrantCounts[g.quadrant] ?? 0) + 1
+    }
+
+    const getQuadrantRate = (quadrant: PerformanceQuadrant): { count: number; rate: number } => {
+        const count = quadrantCounts[quadrant] ?? 0
+        const rate = totalGamesForQuadrant > 0 ? Number(((count / totalGamesForQuadrant) * 100).toFixed(1)) : 0
+        return { count, rate }
+    }
+
+    const getQuadrantBadge = (quadrant: PerformanceQuadrant, rank: number): React.ReactElement => {
+        const isTop = rank === 1 || (gameMode === '4p' && rank === 2)
+        const isLast = gameMode === '3p' ? rank === 3 : rank === 4
+
         switch (quadrant) {
             case 'SKILLFUL_WIN':
-                return <span className="px-2 py-0.5 rounded text-xs bg-emerald-500/20 text-emerald-400 font-medium">실력승 (대승)</span>
+                if (rank === 1) {
+                    return <span className="px-2 py-0.5 rounded text-xs bg-emerald-500/20 text-emerald-400 font-medium">실력 대승 (1위)</span>
+                }
+                if (isTop) {
+                    return <span className="px-2 py-0.5 rounded text-xs bg-emerald-500/20 text-emerald-400 font-medium">실력 선방 (연대)</span>
+                }
+                return <span className="px-2 py-0.5 rounded text-xs bg-slate-700/50 text-slate-300 font-medium">선전 석패 ({rank}위)</span>
             case 'UNLUCKY_LOSS':
-                return <span className="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-400 font-medium">억까 피해 (불운)</span>
+                if (isTop) {
+                    return <span className="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-300 font-medium">불운 극복 (선방)</span>
+                }
+                return <span className="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-400 font-medium">억까 피해 ({isLast ? '라스' : `${rank}위`})</span>
             case 'SLUMP_LOSS':
-                return <span className="px-2 py-0.5 rounded text-xs bg-rose-500/20 text-rose-400 font-medium">실력 저하 (난조)</span>
+                return <span className="px-2 py-0.5 rounded text-xs bg-rose-500/20 text-rose-400 font-medium">실력 난조 ({isLast ? '라스' : `${rank}위`})</span>
             case 'LUCKY_FLUKE':
-                return <span className="px-2 py-0.5 rounded text-xs bg-blue-500/20 text-blue-400 font-medium">운빨 승리</span>
+                if (isTop) {
+                    return <span className="px-2 py-0.5 rounded text-xs bg-blue-500/20 text-blue-400 font-medium">운빨 승리 ({rank}위)</span>
+                }
+                return <span className="px-2 py-0.5 rounded text-xs bg-indigo-500/20 text-indigo-300 font-medium">운빨 방어 ({rank}위)</span>
         }
     }
 
@@ -437,6 +490,14 @@ export default function DashboardPage(): React.ReactElement {
                                 <YAxis yAxisId="right" domain={gameMode === '3p' ? [1, 3] : [1, 4]} reversed stroke="#f59e0b" orientation="right" label={{ value: '순위', angle: 90, position: 'insideRight' }} />
                                 <Tooltip
                                     contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
+                                    labelFormatter={(label) => {
+                                        const idx = Number(label) - 1
+                                        const targetGame = currentStats.games[currentStats.games.length - 1 - idx]
+                                        if (targetGame && targetGame.timestamp) {
+                                            return `${label}번째 대국 (${formatTimestamp(targetGame.timestamp)})`
+                                        }
+                                        return `${label}번째 대국`
+                                    }}
                                 />
                                 <Line yAxisId="left" type="monotone" dataKey="luck" stroke="#a855f7" strokeWidth={2} name="운 점수" />
                                 <Line yAxisId="right" type="monotone" dataKey="rank" stroke="#f59e0b" strokeWidth={2} name="순위" />
@@ -447,10 +508,17 @@ export default function DashboardPage(): React.ReactElement {
 
                 {/* Quadrant Matrix */}
                 <div className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800/80">
-                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                        <Dice5 className="w-5 h-5 text-purple-400" />
-                        운 vs 실력 사분면 매트릭스 (Quadrant Analysis)
-                    </h2>
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                            <Dice5 className="w-5 h-5 text-purple-400" />
+                            운 vs 실력 사분면 매트릭스 (Quadrant Analysis)
+                        </h2>
+                        {totalGamesForQuadrant > 0 && (
+                            <span className="text-xs text-slate-400 bg-slate-800/80 px-2.5 py-1 rounded-md border border-slate-700/60 font-mono">
+                                최근 {totalGamesForQuadrant}국 분석
+                            </span>
+                        )}
+                    </div>
                     <div className="h-64 w-full">
                         <ResponsiveContainer width="100%" height="100%">
                             <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
@@ -463,23 +531,63 @@ export default function DashboardPage(): React.ReactElement {
                                 <Tooltip
                                     cursor={{ strokeDasharray: '3 3' }}
                                     contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
+                                    formatter={(value, name) => [value, name === 'luck' ? '운 점수' : '실력 점수']}
                                 />
                                 <Scatter name="대국 데이터" data={scatterData} fill="#f59e0b" />
                             </ScatterChart>
                         </ResponsiveContainer>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs text-slate-400 mt-2">
-                        <div className="bg-slate-800/40 p-2 rounded">
-                            <span className="text-amber-400 font-semibold">2사분면 (억까 패배)</span>: 실력은 높으나 운이 따르지 않음
+                    <div className="grid grid-cols-2 gap-2.5 text-xs text-slate-400 mt-3">
+                        <div className="bg-slate-800/50 p-2.5 rounded-xl border border-slate-700/50 flex flex-col justify-between">
+                            <div className="flex items-center justify-between">
+                                <span className="text-amber-400 font-semibold">2사분면 (억까 피해)</span>
+                                <span className="font-bold text-amber-300 font-mono text-sm">
+                                    {getQuadrantRate('UNLUCKY_LOSS').rate}%
+                                </span>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px] text-slate-400 mt-1">
+                                <span>실력 높으나 운 부족</span>
+                                <span className="text-slate-500 font-mono">{getQuadrantRate('UNLUCKY_LOSS').count}국 ({getQuadrantRate('UNLUCKY_LOSS').rate}%)</span>
+                            </div>
                         </div>
-                        <div className="bg-slate-800/40 p-2 rounded">
-                            <span className="text-emerald-400 font-semibold">1사분면 (실력 승리)</span>: 실력과 운 모두 호조
+
+                        <div className="bg-slate-800/50 p-2.5 rounded-xl border border-slate-700/50 flex flex-col justify-between">
+                            <div className="flex items-center justify-between">
+                                <span className="text-emerald-400 font-semibold">1사분면 (실력 승리)</span>
+                                <span className="font-bold text-emerald-300 font-mono text-sm">
+                                    {getQuadrantRate('SKILLFUL_WIN').rate}%
+                                </span>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px] text-slate-400 mt-1">
+                                <span>실력과 운 모두 호조</span>
+                                <span className="text-slate-500 font-mono">{getQuadrantRate('SKILLFUL_WIN').count}국 ({getQuadrantRate('SKILLFUL_WIN').rate}%)</span>
+                            </div>
                         </div>
-                        <div className="bg-slate-800/40 p-2 rounded">
-                            <span className="text-rose-400 font-semibold">3사분면 (슬럼프/난조)</span>: 실력도 운도 모두 난조
+
+                        <div className="bg-slate-800/50 p-2.5 rounded-xl border border-slate-700/50 flex flex-col justify-between">
+                            <div className="flex items-center justify-between">
+                                <span className="text-rose-400 font-semibold">3사분면 (실력 난조)</span>
+                                <span className="font-bold text-rose-300 font-mono text-sm">
+                                    {getQuadrantRate('SLUMP_LOSS').rate}%
+                                </span>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px] text-slate-400 mt-1">
+                                <span>실력도 운도 모두 난조</span>
+                                <span className="text-slate-500 font-mono">{getQuadrantRate('SLUMP_LOSS').count}국 ({getQuadrantRate('SLUMP_LOSS').rate}%)</span>
+                            </div>
                         </div>
-                        <div className="bg-slate-800/40 p-2 rounded">
-                            <span className="text-blue-400 font-semibold">4사분면 (운빨 승리)</span>: 실수는 많았으나 운으로 이김
+
+                        <div className="bg-slate-800/50 p-2.5 rounded-xl border border-slate-700/50 flex flex-col justify-between">
+                            <div className="flex items-center justify-between">
+                                <span className="text-blue-400 font-semibold">4사분면 (운빨 승리)</span>
+                                <span className="font-bold text-blue-300 font-mono text-sm">
+                                    {getQuadrantRate('LUCKY_FLUKE').rate}%
+                                </span>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px] text-slate-400 mt-1">
+                                <span>실수는 많았으나 운 승리</span>
+                                <span className="text-slate-500 font-mono">{getQuadrantRate('LUCKY_FLUKE').count}국 ({getQuadrantRate('LUCKY_FLUKE').rate}%)</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -514,10 +622,16 @@ export default function DashboardPage(): React.ReactElement {
                                     <div>
                                         <div className="font-semibold text-white flex items-center gap-2">
                                             <span>{game.finalScore.toLocaleString()}점</span>
-                                            {getQuadrantBadge(game.quadrant)}
+                                            {getQuadrantBadge(game.quadrant, game.rank)}
                                         </div>
-                                        <div className="text-xs text-slate-500 font-mono">
-                                            ID: {game.gameId}
+                                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 font-mono mt-0.5">
+                                            <span>ID: {game.gameId}</span>
+                                            {game.timestamp && (
+                                                <span className="flex items-center gap-1 text-slate-400 font-sans">
+                                                    <Clock className="w-3.5 h-3.5 text-amber-400/90" />
+                                                    {formatTimestamp(game.timestamp)}
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
