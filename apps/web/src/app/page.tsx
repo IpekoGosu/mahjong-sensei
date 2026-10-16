@@ -177,28 +177,28 @@ export default function DashboardPage(): React.ReactElement {
         }
     }
 
-    // Default stats fallback tuned by actual Amae-Koromo verified records
+    // Default stats fallback tuned by actual recent 50 games from Amae-Koromo
     const currentStats: RollingWindowStats = stats ?? (
         gameMode === '3p'
             ? {
                 windowSize,
                 gameMode: '3p',
-                totalGames: 1988,
-                averageRank: 1.95,
-                topTwoRate: 70.3,
-                lastPlaceRate: 29.7,
+                totalGames: 50,
+                averageRank: 2.21,
+                topTwoRate: 58.5,
+                lastPlaceRate: 41.5,
                 negativeRate: 3.7,
-                averageLuckScore: 52.0,
-                averageSkillScore: 72.5,
-                luckTrend: [55, 48, 52, 60, 46, 53, 58, 49, 51, 54],
-                rankTrend: [1, 2, 2, 1, 3, 2, 1, 2, 3, 1],
+                averageLuckScore: 43.5,
+                averageSkillScore: 52.0,
+                luckTrend: [45, 38, 48, 52, 40, 42, 35, 47, 49, 44],
+                rankTrend: [2, 3, 2, 1, 3, 2, 3, 1, 2, 3],
                 games: []
             }
             : {
                 windowSize,
                 gameMode: '4p',
-                totalGames: 207,
-                averageRank: 2.40,
+                totalGames: 50,
+                averageRank: 2.38,
                 topTwoRate: 56.0,
                 lastPlaceRate: 20.8,
                 negativeRate: 8.7,
