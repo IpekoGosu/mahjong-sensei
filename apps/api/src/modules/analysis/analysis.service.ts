@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '../../prisma/prisma.service'
 import {
+    GameMode,
     RollingWindowSize,
     RollingWindowStats,
     GameMetricSummary,
@@ -16,11 +17,19 @@ export class AnalysisService {
 
     public async getRollingStats(
         accountId: number,
-        windowSize: RollingWindowSize
+        windowSize: RollingWindowSize,
+        mode: GameMode = '3p'
     ): Promise<RollingWindowStats> {
+        const roomFilter = mode === '3p'
+            ? { contains: '3인' }
+            : { not: { contains: '3인' } }
+
         const participants = await this.prisma.gameParticipant.findMany({
             where: {
-                player: { accountId }
+                player: { accountId },
+                game: {
+                    roomType: roomFilter
+                }
             },
             include: {
                 game: {

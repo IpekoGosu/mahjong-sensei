@@ -12,6 +12,16 @@ export class PaipuController {
         return await this.paipuService.importPaipu(dto.urlOrUuid)
     }
 
+    @Post('import-batch')
+    public async importBatch(@Body() dto: { readonly inputs: readonly string[] }): Promise<{
+        total: number
+        imported: number
+        failed: number
+        gameIds: readonly string[]
+    }> {
+        return await this.paipuService.importBatch(dto.inputs)
+    }
+
     @Get(':id')
     public async getDetail(@Param('id') id: string): Promise<PaipuDetail> {
         return await this.paipuService.getPaipuDetail(id)

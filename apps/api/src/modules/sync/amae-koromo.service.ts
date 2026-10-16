@@ -138,35 +138,45 @@ export class AmaeKoromoService {
 
             const maxRank = mode === '3p' ? 3 : 4
 
+            // Generate realistic distributed rank sequence reflecting exact historical proportions
+            const distributedRanks: number[] = []
+            if (mode === '3p') {
+                const count1 = Math.round(gameCount * (rankRates[0] ?? 0.35))
+                const count2 = Math.round(gameCount * (rankRates[1] ?? 0.35))
+                const count3 = Math.max(0, gameCount - count1 - count2)
+                for (let j = 0; j < count1; j++) { distributedRanks.push(1) }
+                for (let j = 0; j < count2; j++) { distributedRanks.push(2) }
+                for (let j = 0; j < count3; j++) { distributedRanks.push(3) }
+            } else {
+                const count1 = Math.round(gameCount * (rankRates[0] ?? 0.25))
+                const count2 = Math.round(gameCount * (rankRates[1] ?? 0.30))
+                const count3 = Math.round(gameCount * (rankRates[2] ?? 0.23))
+                const count4 = Math.max(0, gameCount - count1 - count2 - count3)
+                for (let j = 0; j < count1; j++) { distributedRanks.push(1) }
+                for (let j = 0; j < count2; j++) { distributedRanks.push(2) }
+                for (let j = 0; j < count3; j++) { distributedRanks.push(3) }
+                for (let j = 0; j < count4; j++) { distributedRanks.push(4) }
+            }
+
+            // Uniform Fisher-Yates shuffle to guarantee natural variance in every rolling window
+            for (let j = distributedRanks.length - 1; j > 0; j--) {
+                const k = Math.floor(Math.random() * (j + 1))
+                const currentJ = distributedRanks[j] ?? 2
+                const currentK = distributedRanks[k] ?? 2
+                distributedRanks[j] = currentK
+                distributedRanks[k] = currentJ
+            }
+
+            // Clean up existing synthetic sync games for this mode to prevent stale data
+            await tx.game.deleteMany({
+                where: {
+                    id: { startsWith: `amae-sync-${mode}-${accountId}-` }
+                }
+            })
+
             for (let i = 0; i < gameCount; i++) {
                 const gameId = `amae-sync-${mode}-${accountId}-${i + 1}`
-                let rank = 1
-                const rand = (i % 100) / 100
-
-                if (mode === '3p') {
-                    const r1 = rankRates[0] ?? 0.33
-                    const r2 = r1 + (rankRates[1] ?? 0.33)
-                    if (rand < r1) {
-                        rank = 1
-                    } else if (rand < r2) {
-                        rank = 2
-                    } else {
-                        rank = 3
-                    }
-                } else {
-                    const r1 = rankRates[0] ?? 0.25
-                    const r2 = r1 + (rankRates[1] ?? 0.25)
-                    const r3 = r2 + (rankRates[2] ?? 0.25)
-                    if (rand < r1) {
-                        rank = 1
-                    } else if (rand < r2) {
-                        rank = 2
-                    } else if (rand < r3) {
-                        rank = 3
-                    } else {
-                        rank = 4
-                    }
-                }
+                const rank = distributedRanks[i] ?? 2
 
                 const finalScore = avgScores[rank - 1] ?? 25000
                 const gameLuck = Math.max(10, Math.min(95, luckScore + ((i % 5) - 2) * 4))

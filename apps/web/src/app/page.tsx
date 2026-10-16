@@ -17,7 +17,9 @@ import {
     Award,
     UserCheck,
     Users,
-    Flame
+    Flame,
+    FileText,
+    HelpCircle
 } from 'lucide-react'
 import {
     LineChart,
@@ -34,12 +36,14 @@ import {
 } from 'recharts'
 
 export default function DashboardPage(): React.ReactElement {
-    const [gameMode, setGameMode] = useState<GameMode>('3p') // Default to 3-player as requested
+    const [gameMode, setGameMode] = useState<GameMode>('3p')
     const [windowSize, setWindowSize] = useState<RollingWindowSize>(10)
     const [accountId, setAccountId] = useState<number>(120511240)
     const [nickname, setNickname] = useState<string>('서울불빛')
     const [stats, setStats] = useState<RollingWindowStats | null>(null)
     const [paipuInput, setPaipuInput] = useState<string>('')
+    const [batchModalOpen, setBatchModalOpen] = useState<boolean>(false)
+    const [batchInput, setBatchInput] = useState<string>('')
     const [syncing, setSyncing] = useState<boolean>(false)
     const [importing, setImporting] = useState<boolean>(false)
     const [statusMessage, setStatusMessage] = useState<string>('')
@@ -47,9 +51,9 @@ export default function DashboardPage(): React.ReactElement {
 
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 
-    const fetchStats = (accId: number, size: RollingWindowSize): void => {
+    const fetchStats = (accId: number, size: RollingWindowSize, mode: GameMode): void => {
         startTransition(() => {
-            fetch(`${apiUrl}/analysis/rolling?accountId=${accId}&window=${size}`)
+            fetch(`${apiUrl}/analysis/rolling?accountId=${accId}&window=${size}&mode=${mode}`)
                 .then((res) => {
                     if (res.ok) {
                         return res.json() as Promise<RollingWindowStats>
@@ -62,7 +66,7 @@ export default function DashboardPage(): React.ReactElement {
                     }
                 })
                 .catch(() => {
-                    // API not yet running
+                    // API error fallback
                 })
         })
     }
@@ -90,7 +94,7 @@ export default function DashboardPage(): React.ReactElement {
                 setAccountId(data.accountId)
                 setNickname(data.nickname)
                 setStatusMessage(`✅ ${data.nickname} 계정의 ${targetMode === '3p' ? '3인 마작' : '4인 마작'} 실전 대국(${data.totalGames}국) 동기화 완료!`)
-                fetchStats(data.accountId, windowSize)
+                fetchStats(data.accountId, windowSize, targetMode)
             } else {
                 setStatusMessage(`⚠️ ${name} 계정의 공개 전적을 찾을 수 없습니다.`)
             }
@@ -102,15 +106,14 @@ export default function DashboardPage(): React.ReactElement {
     }
 
     useEffect(() => {
-        // Initial sync on mount for selected mode
         handleSync(gameMode, '서울불빛')
     }, [gameMode])
 
     useEffect(() => {
         if (accountId) {
-            fetchStats(accountId, windowSize)
+            fetchStats(accountId, windowSize, gameMode)
         }
-    }, [windowSize, accountId])
+    }, [windowSize, accountId, gameMode])
 
     const handleImport = async (e: React.FormEvent): Promise<void> => {
         e.preventDefault()
@@ -129,9 +132,9 @@ export default function DashboardPage(): React.ReactElement {
             })
 
             if (res.ok) {
-                setStatusMessage('✅ 패보 수집 및 분석이 완료되었습니다!')
+                setStatusMessage('✅ 실제 패보가 성공적으로 분석 및 등록되었습니다!')
                 setPaipuInput('')
-                fetchStats(accountId, windowSize)
+                fetchStats(accountId, windowSize, gameMode)
             } else {
                 setStatusMessage('⚠️ 패보 등록에 실패했습니다. 올바른 링크나 UUID인지 확인해주세요.')
             }
@@ -142,7 +145,39 @@ export default function DashboardPage(): React.ReactElement {
         }
     }
 
-    // Default stats fallback for 3P vs 4P based on actual retrieved Amae-Koromo data
+    const handleBatchImport = async (): Promise<void> => {
+        const lines = batchInput.split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
+        if (lines.length === 0) {
+            return
+        }
+
+        setImporting(true)
+        setStatusMessage(`${lines.length}개의 실제 패보 일괄 등록 및 정밀 분석 중...`)
+
+        try {
+            const res = await fetch(`${apiUrl}/paipu/import-batch`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ inputs: lines })
+            })
+
+            if (res.ok) {
+                const data = (await res.json()) as { imported: number; total: number }
+                setStatusMessage(`✅ 총 ${data.imported}/${data.total}개의 패보가 성공적으로 등록 및 분석되었습니다!`)
+                setBatchInput('')
+                setBatchModalOpen(false)
+                fetchStats(accountId, windowSize, gameMode)
+            } else {
+                setStatusMessage('⚠️ 패보 일괄 등록 중 일부 실패가 발생했습니다.')
+            }
+        } catch {
+            setStatusMessage('⚠️ 백엔드 서버 연결에 실패했습니다.')
+        } finally {
+            setImporting(false)
+        }
+    }
+
+    // Default stats fallback tuned by actual Amae-Koromo verified records
     const currentStats: RollingWindowStats = stats ?? (
         gameMode === '3p'
             ? {
@@ -213,13 +248,13 @@ export default function DashboardPage(): React.ReactElement {
                     <div>
                         <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2">
                             Mahjong Sensei
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono">v0.3</span>
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono">v0.4</span>
                         </h1>
                         <p className="text-sm text-slate-400">작혼 패보 기반 운 & 실력 분리 분석 엔진</p>
                     </div>
                 </div>
 
-                {/* Account Sync & Paipu Quick Import */}
+                {/* Account Sync & Paipu Quick/Batch Import */}
                 <div className="flex flex-wrap items-center gap-3">
                     <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-lg">
                         <UserCheck className="w-4 h-4 text-amber-400" />
@@ -240,10 +275,10 @@ export default function DashboardPage(): React.ReactElement {
                     <form onSubmit={handleImport} className="flex items-center gap-2">
                         <input
                             type="text"
-                            placeholder="작혼 패보 URL 또는 UUID..."
+                            placeholder="단일 패보 URL/UUID..."
                             value={paipuInput}
                             onChange={(e) => setPaipuInput(e.target.value)}
-                            className="px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-amber-500 w-56 transition-colors"
+                            className="px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-sm focus:outline-none focus:border-amber-500 w-48 transition-colors"
                         />
                         <button
                             type="submit"
@@ -254,6 +289,14 @@ export default function DashboardPage(): React.ReactElement {
                             등록
                         </button>
                     </form>
+
+                    <button
+                        onClick={() => setBatchModalOpen(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-sm font-semibold transition-all cursor-pointer"
+                    >
+                        <FileText className="w-4 h-4 text-amber-400" />
+                        일괄 등록
+                    </button>
                 </div>
             </header>
 
@@ -444,12 +487,19 @@ export default function DashboardPage(): React.ReactElement {
 
             {/* Recent Games Detail */}
             <section className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800/80">
-                <h2 className="text-lg font-bold text-white mb-4">
-                    최근 대국 분석 내역 (최근 {windowSize}판 · {gameMode === '3p' ? '3인 마작' : '4인 마작'})
-                </h2>
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                        최근 대국 분석 내역 (최근 {windowSize}판 · {gameMode === '3p' ? '3인 마작' : '4인 마작'})
+                    </h2>
+                    <div className="flex items-center gap-1.5 text-xs text-slate-400 bg-slate-800/50 px-3 py-1.5 rounded-lg border border-slate-700/50">
+                        <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+                        <span>인게임 패보 링크를 등록하면 실제 국별 샹텐수/억까 리플레이가 연동됩니다.</span>
+                    </div>
+                </div>
+
                 <div className="divide-y divide-slate-800">
                     {currentStats.games.length === 0 ? (
-                        <p className="py-4 text-sm text-slate-500">대국 데이터 로딩 중이거나 없습니다. 상단에서 [동기화] 버튼을 눌러보세요.</p>
+                        <p className="py-4 text-sm text-slate-500">대국 데이터 로딩 중이거나 없습니다. 상단에서 [동기화] 또는 [일괄 등록]을 눌러보세요.</p>
                     ) : (
                         currentStats.games.map((game) => (
                             <div key={game.gameId} className="py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -495,6 +545,53 @@ export default function DashboardPage(): React.ReactElement {
                     )}
                 </div>
             </section>
+
+            {/* Batch Import Modal */}
+            {batchModalOpen && (
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 space-y-4 shadow-2xl">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                <FileText className="w-5 h-5 text-amber-500" />
+                                실제 작혼 패보 일괄 등록
+                            </h3>
+                            <button
+                                onClick={() => setBatchModalOpen(false)}
+                                className="text-slate-400 hover:text-white text-sm cursor-pointer"
+                            >
+                                닫기
+                            </button>
+                        </div>
+                        <p className="text-xs text-slate-400 leading-relaxed">
+                            작혼 인게임 [패보] 메뉴에서 최근 대국의 링크 또는 UUID를 한 줄에 하나씩 붙여넣으세요.
+                            (예: <code>241015-xxxx-xxxx-...</code>)
+                        </p>
+                        <textarea
+                            rows={8}
+                            placeholder="https://mahjongsoul.game.yo-star.com/?paipu=241015-xxxx&#10;241014-yyyy-yyyy...&#10;241013-zzzz-zzzz..."
+                            value={batchInput}
+                            onChange={(e) => setBatchInput(e.target.value)}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm font-mono text-slate-200 focus:outline-none focus:border-amber-500 resize-none"
+                        />
+                        <div className="flex items-center justify-end gap-3 pt-2">
+                            <button
+                                onClick={() => setBatchModalOpen(false)}
+                                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                            >
+                                취소
+                            </button>
+                            <button
+                                onClick={handleBatchImport}
+                                disabled={importing || !batchInput.trim()}
+                                className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-semibold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2"
+                            >
+                                {importing && <RotateCw className="w-4 h-4 animate-spin" />}
+                                일괄 분석 & 등록
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </main>
     )
 }

@@ -129,6 +129,42 @@ export class PaipuService {
         return { success: true, gameId: uuid }
     }
 
+    public async importBatch(inputs: readonly string[]): Promise<{
+        total: number
+        imported: number
+        failed: number
+        gameIds: readonly string[]
+    }> {
+        const gameIds: string[] = []
+        let imported = 0
+        let failed = 0
+
+        for (const input of inputs) {
+            const trimmed = input.trim()
+            if (!trimmed) {
+                continue
+            }
+            try {
+                const res = await this.importPaipu(trimmed)
+                if (res.success) {
+                    imported++
+                    gameIds.push(res.gameId)
+                } else {
+                    failed++
+                }
+            } catch {
+                failed++
+            }
+        }
+
+        return {
+            total: imported + failed,
+            imported,
+            failed,
+            gameIds
+        }
+    }
+
     public async getPaipuDetail(gameId: string): Promise<PaipuDetail> {
         const game = await this.prisma.game.findUnique({
             where: { id: gameId },
