@@ -1,22 +1,17 @@
 import { Controller, Post, Query } from '@nestjs/common'
-import { AmaeKoromoService } from './amae-koromo.service'
+import { AmaeKoromoService, SyncPlayerResult } from './amae-koromo.service'
+import { GameMode } from '@mahjong-sensei/types'
 
 @Controller('sync')
 export class SyncController {
     public constructor(private readonly syncService: AmaeKoromoService) {}
 
     @Post('player')
-    public async syncPlayer(@Query('nickname') nickname: string): Promise<{
-        success: boolean
-        accountId: number
-        nickname: string
-        totalGames: number
-        avgRank: number
-        winRate: number
-        dealInRate: number
-        luckScore: number
-        skillScore: number
-    }> {
-        return await this.syncService.syncPlayerByNickname(nickname)
+    public async syncPlayer(
+        @Query('nickname') nickname: string,
+        @Query('mode') mode: GameMode = '4p'
+    ): Promise<SyncPlayerResult> {
+        const validMode: GameMode = mode === '3p' ? '3p' : '4p'
+        return await this.syncService.syncPlayerByNickname(nickname, validMode)
     }
 }

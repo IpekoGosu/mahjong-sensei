@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../../prisma/prisma.service'
+import { GameMode } from '@mahjong-sensei/types'
 
 interface AmaeSearchResult {
     readonly id: number
@@ -32,63 +33,89 @@ interface AmaeExtendedStats {
 
 interface AmaeRankStats {
     readonly count: number
-    readonly rank_rates: readonly [number, number, number, number]
-    readonly rank_avg_score: readonly [number, number, number, number]
+    readonly rank_rates: readonly [number, number, number, number] | readonly [number, number, number]
+    readonly rank_avg_score: readonly [number, number, number, number] | readonly [number, number, number]
     readonly avg_rank: number
+    readonly negative_rate?: number
+}
+
+export interface SyncPlayerResult {
+    readonly success: boolean
+    readonly accountId: number
+    readonly nickname: string
+    readonly gameMode: GameMode
+    readonly totalGames: number
+    readonly avgRank: number
+    readonly winRate: number
+    readonly dealInRate: number
+    readonly negativeRate: number
+    readonly luckScore: number
+    readonly skillScore: number
 }
 
 @Injectable()
 export class AmaeKoromoService {
-    private readonly baseUrl: string = 'https://5-data.amae-koromo.com/api/v2/pl4'
-
     public constructor(private readonly prisma: PrismaService) {}
 
-    public async syncPlayerByNickname(nickname: string): Promise<{
-        success: boolean
-        accountId: number
-        nickname: string
-        totalGames: number
-        avgRank: number
-        winRate: number
-        dealInRate: number
-        luckScore: number
-        skillScore: number
-    }> {
+    public async syncPlayerByNickname(nickname: string, mode: GameMode = '4p'): Promise<SyncPlayerResult> {
         /*_ GEMINI THINKING _*/
+        const baseUrl = mode === '3p'
+            ? 'https://5-data.amae-koromo.com/api/v2/pl3'
+            : 'https://5-data.amae-koromo.com/api/v2/pl4'
+
+        const modesParam = mode === '3p' ? '21,22,23,24,25,26' : '8,9,11,12,15,16'
+
         // 1. Search player
-        const searchRes = await fetch(`${this.baseUrl}/search_player/${encodeURIComponent(nickname)}`)
+        const searchRes = await fetch(`${baseUrl}/search_player/${encodeURIComponent(nickname)}`)
         if (!searchRes.ok) {
             throw new NotFoundException(`Failed to search player: ${nickname}`)
         }
         const searchList = (await searchRes.json()) as readonly AmaeSearchResult[]
         const found = searchList[0]
         if (!found) {
-            throw new NotFoundException(`Player not found on Amae-Koromo: ${nickname}`)
+            throw new NotFoundException(`Player not found on Amae-Koromo (${mode}): ${nickname}`)
         }
 
         const accountId = found.id
 
         // 2. Fetch extended stats
-        const extRes = await fetch(`${this.baseUrl}/player_extended_stats/${accountId}/1262304000000/1800000000000?mode=8,9,11,12,15,16`)
+        const extRes = await fetch(`${baseUrl}/player_extended_stats/${accountId}/1262304000000/1900000000000?mode=${modesParam}`)
         const extStats = (await extRes.json()) as AmaeExtendedStats
 
         // 3. Fetch rank stats
-        const rankRes = await fetch(`${this.baseUrl}/player_stats/${accountId}/1262304000000/1800000000000?mode=8,9,11,12,15,16`)
+        const rankRes = await fetch(`${baseUrl}/player_stats/${accountId}/1262304000000/1900000000000?mode=${modesParam}`)
         const rankStats = (await rankRes.json()) as AmaeRankStats
 
-        // Calculate aggregate Luck Score
-        // Baseline: Starting shanten (3.5), Uradora rate (28%), Ippatsu rate (20%)
-        const shantenLuck = (3.5 - (extStats.平均起手向听 || 3.5)) * 15
-        const uradoraLuck = ((extStats.里宝率 || 0.28) - 0.28) * 40
-        const ippatsuLuck = ((extStats.一发率 || 0.2) - 0.2) * 30
-        const luckScore = Math.max(0, Math.min(100, Math.round(50 + shantenLuck + uradoraLuck + ippatsuLuck)))
+        // Luck Score Calculation tuned by game mode
+        let luckScore: number
+        let skillScore: number
 
-        // Calculate aggregate Skill Score
-        // Deal-in control (baseline 13.5%), Win rate (baseline 20%), Riichi good-shape/initiative (baseline 80%)
-        const dealInSkill = (0.135 - (extStats.放铳率 || 0.135)) * 200
-        const winSkill = ((extStats.和牌率 || 0.2) - 0.2) * 100
-        const initiativeSkill = ((extStats.先制率 || 0.8) - 0.8) * 50
-        const skillScore = Math.max(0, Math.min(100, Math.round(50 + dealInSkill + winSkill + initiativeSkill)))
+        if (mode === '3p') {
+            // 3-Player Mahjong baselines: Starting shanten ~ 3.25, Uradora ~ 42%, Ippatsu ~ 20%
+            const shantenLuck = (3.25 - (extStats.平均起手向听 || 3.25)) * 18
+            const uradoraLuck = ((extStats.里宝率 || 0.42) - 0.42) * 35
+            const ippatsuLuck = ((extStats.一发率 || 0.20) - 0.20) * 30
+            luckScore = Math.max(0, Math.min(100, Math.round(50 + shantenLuck + uradoraLuck + ippatsuLuck)))
+
+            // 3-Player Skill baselines: Deal-in ~ 15.5%, Win rate ~ 29%, Initiative ~ 80%
+            const dealInSkill = (0.155 - (extStats.放铳率 || 0.155)) * 220
+            const winSkill = ((extStats.和牌率 || 0.29) - 0.29) * 110
+            const initiativeSkill = ((extStats.先制率 || 0.80) - 0.80) * 40
+            skillScore = Math.max(0, Math.min(100, Math.round(50 + dealInSkill + winSkill + initiativeSkill)))
+        } else {
+            // 4-Player Mahjong baselines
+            const shantenLuck = (3.50 - (extStats.平均起手向听 || 3.50)) * 15
+            const uradoraLuck = ((extStats.里宝率 || 0.28) - 0.28) * 40
+            const ippatsuLuck = ((extStats.一发率 || 0.20) - 0.20) * 30
+            luckScore = Math.max(0, Math.min(100, Math.round(50 + shantenLuck + uradoraLuck + ippatsuLuck)))
+
+            const dealInSkill = (0.135 - (extStats.放铳率 || 0.135)) * 200
+            const winSkill = ((extStats.和牌率 || 0.20) - 0.20) * 100
+            const initiativeSkill = ((extStats.先制率 || 0.80) - 0.80) * 50
+            skillScore = Math.max(0, Math.min(100, Math.round(50 + dealInSkill + winSkill + initiativeSkill)))
+        }
+
+        const negativeRate = rankStats.negative_rate ? Number((rankStats.negative_rate * 100).toFixed(1)) : 0
 
         // Persist to PostgreSQL database
         await this.prisma.$transaction(async (tx) => {
@@ -105,27 +132,40 @@ export class AmaeKoromoService {
                 }
             })
 
-            // Generate representative games matching recent rank distributions (up to 50 games)
             const gameCount = Math.min(50, rankStats.count || 20)
-            const rankRates = rankStats.rank_rates || [0.25, 0.25, 0.25, 0.25]
-            const avgScores = rankStats.rank_avg_score || [40000, 28000, 20000, 5000]
+            const rankRates = rankStats.rank_rates
+            const avgScores = rankStats.rank_avg_score
+
+            const maxRank = mode === '3p' ? 3 : 4
 
             for (let i = 0; i < gameCount; i++) {
-                const gameId = `amae-sync-${accountId}-${i + 1}`
+                const gameId = `amae-sync-${mode}-${accountId}-${i + 1}`
                 let rank = 1
                 const rand = (i % 100) / 100
-                const r1 = rankRates[0] ?? 0.25
-                const r2 = r1 + (rankRates[1] ?? 0.25)
-                const r3 = r2 + (rankRates[2] ?? 0.25)
 
-                if (rand < r1) {
-                    rank = 1
-                } else if (rand < r2) {
-                    rank = 2
-                } else if (rand < r3) {
-                    rank = 3
+                if (mode === '3p') {
+                    const r1 = rankRates[0] ?? 0.33
+                    const r2 = r1 + (rankRates[1] ?? 0.33)
+                    if (rand < r1) {
+                        rank = 1
+                    } else if (rand < r2) {
+                        rank = 2
+                    } else {
+                        rank = 3
+                    }
                 } else {
-                    rank = 4
+                    const r1 = rankRates[0] ?? 0.25
+                    const r2 = r1 + (rankRates[1] ?? 0.25)
+                    const r3 = r2 + (rankRates[2] ?? 0.25)
+                    if (rand < r1) {
+                        rank = 1
+                    } else if (rand < r2) {
+                        rank = 2
+                    } else if (rand < r3) {
+                        rank = 3
+                    } else {
+                        rank = 4
+                    }
                 }
 
                 const finalScore = avgScores[rank - 1] ?? 25000
@@ -137,12 +177,12 @@ export class AmaeKoromoService {
                     update: {},
                     create: {
                         id: gameId,
-                        roomType: '은탁/금탁 반장전',
+                        roomType: mode === '3p' ? '3인 마작 반장/동풍전' : '4인 마작 반장/동풍전',
                         gameDate: new Date(Date.now() - (gameCount - i) * 7200000),
                         participants: {
                             create: {
                                 playerId: player.id,
-                                seat: i % 4,
+                                seat: i % maxRank,
                                 finalScore,
                                 finalRank: rank,
                                 luckScore: gameLuck,
@@ -158,10 +198,12 @@ export class AmaeKoromoService {
             success: true,
             accountId,
             nickname: found.nickname,
+            gameMode: mode,
             totalGames: extStats.count,
-            avgRank: rankStats.avg_rank,
+            avgRank: Number(rankStats.avg_rank.toFixed(2)),
             winRate: Number((extStats.和牌率 * 100).toFixed(1)),
             dealInRate: Number((extStats.放铳率 * 100).toFixed(1)),
+            negativeRate,
             luckScore,
             skillScore
         }

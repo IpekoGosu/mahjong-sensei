@@ -1,5 +1,7 @@
 import { SeatIndex } from './paipu'
 
+export type GameMode = '4p' | '3p'
+
 export type RollingWindowSize = 10 | 30 | 50
 
 export type PerformanceQuadrant =
@@ -43,10 +45,12 @@ export interface GameMetricSummary {
 
 export interface RollingWindowStats {
     readonly windowSize: RollingWindowSize
+    readonly gameMode?: GameMode
     readonly totalGames: number
     readonly averageRank: number
     readonly topTwoRate: number
     readonly lastPlaceRate: number
+    readonly negativeRate?: number
     readonly averageLuckScore: number
     readonly averageSkillScore: number
     readonly luckTrend: readonly number[]
