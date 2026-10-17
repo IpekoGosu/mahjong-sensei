@@ -193,6 +193,48 @@ export class AmaeKoromoService {
 
             const baseTimestamp = found.latest_timestamp ? found.latest_timestamp * 1000 : now
 
+            /*_ GEMINI THINKING _*/
+            const gamesData: {
+                id: string
+                roomType: string
+                gameDate: Date
+            }[] = []
+
+            const participantsData: {
+                id: string
+                gameId: string
+                playerId: string
+                seat: number
+                finalScore: number
+                finalRank: number
+                luckScore: number
+                skillScore: number
+            }[] = []
+
+            const roundsData: {
+                id: string
+                gameId: string
+                roundIndex: number
+                honba: number
+                riichiSticks: number
+            }[] = []
+
+            const roundMetricsData: {
+                id: string
+                roundId: string
+                seat: number
+                startShanten: number
+                startDoraCount: number
+                drawLuckRatio: number
+                uradoraHits: number
+                dealInScore: number
+                tsumoLossScore: number
+                tileEfficiency: number
+                luckScore: number
+                skillScore: number
+                isWin: boolean
+            }[] = []
+
             for (let i = 0; i < gameCount; i++) {
                 const gameId = `amae-sync-${mode}-${accountId}-${i + 1}`
                 const rank = distributedRanks[i] ?? 2
@@ -247,44 +289,55 @@ export class AmaeKoromoService {
                 const isDealIn = (rank === maxRank && !isBadLuck)
                 const isWin = (rank === 1 || (rank === 2 && i % 2 === 0))
                 const estimatedShanten = mode === '3p' ? 3 : 4
+                const roundId = `${gameId}-r0`
 
-                await tx.game.create({
-                    data: {
-                        id: gameId,
-                        roomType: mode === '3p' ? '3인 마작 반장/동풍전' : '4인 마작 반장/동풍전',
-                        gameDate: matchTime,
-                        rounds: {
-                            create: {
-                                roundIndex: 0,
-                                roundMetrics: {
-                                    create: {
-                                        seat: playerSeat,
-                                        startShanten: estimatedShanten,
-                                        startDoraCount: gameLuck >= 60 ? 2 : 1,
-                                        drawLuckRatio: gameLuck >= 50 ? 0.35 : 0.20,
-                                        uradoraHits: gameLuck >= 70 ? 1 : 0,
-                                        dealInScore: isDealIn ? 8000 : 0,
-                                        tsumoLossScore: (rank === maxRank && isBadLuck) ? 6000 : 0,
-                                        tileEfficiency: gameSkill >= 50 ? 0.88 : 0.72,
-                                        luckScore: gameLuck,
-                                        skillScore: gameSkill,
-                                        isWin
-                                    }
-                                }
-                            }
-                        },
-                        participants: {
-                            create: {
-                                playerId: player.id,
-                                seat: playerSeat,
-                                finalScore,
-                                finalRank: rank,
-                                luckScore: gameLuck,
-                                skillScore: gameSkill
-                            }
-                        }
-                    }
+                gamesData.push({
+                    id: gameId,
+                    roomType: mode === '3p' ? '3인 마작 반장/동풍전' : '4인 마작 반장/동풍전',
+                    gameDate: matchTime
                 })
+
+                participantsData.push({
+                    id: `${gameId}-p${playerSeat}`,
+                    gameId,
+                    playerId: player.id,
+                    seat: playerSeat,
+                    finalScore,
+                    finalRank: rank,
+                    luckScore: gameLuck,
+                    skillScore: gameSkill
+                })
+
+                roundsData.push({
+                    id: roundId,
+                    gameId,
+                    roundIndex: 0,
+                    honba: 0,
+                    riichiSticks: 0
+                })
+
+                roundMetricsData.push({
+                    id: `${roundId}-m${playerSeat}`,
+                    roundId,
+                    seat: playerSeat,
+                    startShanten: estimatedShanten,
+                    startDoraCount: gameLuck >= 60 ? 2 : 1,
+                    drawLuckRatio: gameLuck >= 50 ? 0.35 : 0.20,
+                    uradoraHits: gameLuck >= 70 ? 1 : 0,
+                    dealInScore: isDealIn ? 8000 : 0,
+                    tsumoLossScore: (rank === maxRank && isBadLuck) ? 6000 : 0,
+                    tileEfficiency: gameSkill >= 50 ? 0.88 : 0.72,
+                    luckScore: gameLuck,
+                    skillScore: gameSkill,
+                    isWin
+                })
+            }
+
+            if (gamesData.length > 0) {
+                await tx.game.createMany({ data: gamesData })
+                await tx.gameParticipant.createMany({ data: participantsData })
+                await tx.round.createMany({ data: roundsData })
+                await tx.roundMetric.createMany({ data: roundMetricsData })
             }
         })
 
