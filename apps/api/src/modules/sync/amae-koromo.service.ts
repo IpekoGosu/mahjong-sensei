@@ -201,6 +201,7 @@ export class AmaeKoromoService {
                 // Realistic correlation between rank, luck, and skill
                 let rankBiasLuck = 0
                 let rankBiasSkill = 0
+                let isBadLuck = false
 
                 if (mode === '3p') {
                     if (rank === 1) {
@@ -211,7 +212,7 @@ export class AmaeKoromoService {
                         rankBiasSkill = 2
                     } else {
                         // 3rd place (last): either unlucky damage or misplay
-                        const isBadLuck = (i % 2 === 0)
+                        isBadLuck = (i % 2 === 0)
                         rankBiasLuck = isBadLuck ? -22 : -10
                         rankBiasSkill = isBadLuck ? 2 : -20
                     }
@@ -227,7 +228,7 @@ export class AmaeKoromoService {
                         rankBiasSkill = -4
                     } else {
                         // 4th place (last): either severe bad luck or deal-in mistakes
-                        const isBadLuck = (i % 2 === 0)
+                        isBadLuck = (i % 2 === 0)
                         rankBiasLuck = isBadLuck ? -24 : -12
                         rankBiasSkill = isBadLuck ? 0 : -22
                     }
@@ -242,15 +243,40 @@ export class AmaeKoromoService {
                 // Realistic start timestamp stepped back from latest match
                 const matchTime = new Date(baseTimestamp - (gameCount - 1 - i) * 3600000 * 2.5)
 
+                const playerSeat = i % maxRank
+                const isDealIn = (rank === maxRank && !isBadLuck)
+                const isWin = (rank === 1 || (rank === 2 && i % 2 === 0))
+                const estimatedShanten = mode === '3p' ? 3 : 4
+
                 await tx.game.create({
                     data: {
                         id: gameId,
                         roomType: mode === '3p' ? '3인 마작 반장/동풍전' : '4인 마작 반장/동풍전',
                         gameDate: matchTime,
+                        rounds: {
+                            create: {
+                                roundIndex: 0,
+                                roundMetrics: {
+                                    create: {
+                                        seat: playerSeat,
+                                        startShanten: estimatedShanten,
+                                        startDoraCount: gameLuck >= 60 ? 2 : 1,
+                                        drawLuckRatio: gameLuck >= 50 ? 0.35 : 0.20,
+                                        uradoraHits: gameLuck >= 70 ? 1 : 0,
+                                        dealInScore: isDealIn ? 8000 : 0,
+                                        tsumoLossScore: (rank === maxRank && isBadLuck) ? 6000 : 0,
+                                        tileEfficiency: gameSkill >= 50 ? 0.88 : 0.72,
+                                        luckScore: gameLuck,
+                                        skillScore: gameSkill,
+                                        isWin
+                                    }
+                                }
+                            }
+                        },
                         participants: {
                             create: {
                                 playerId: player.id,
-                                seat: i % maxRank,
+                                seat: playerSeat,
                                 finalScore,
                                 finalRank: rank,
                                 luckScore: gameLuck,
