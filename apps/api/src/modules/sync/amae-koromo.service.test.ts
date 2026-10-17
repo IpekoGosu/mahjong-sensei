@@ -37,9 +37,10 @@ class MockAmaeKoromoService extends AmaeKoromoService {
         extStats: Partial<AmaeExtendedStats>,
         gameLuck: number = 50,
         avgLuck: number = 50,
-        mode: GameMode = '3p'
+        mode: GameMode = '3p',
+        roundIndex: number = 0
     ): number {
-        return this.calculateStartShanten(playerSeat, extStats, gameLuck, avgLuck, mode)
+        return this.calculateStartShanten(playerSeat, extStats, gameLuck, avgLuck, mode, roundIndex)
     }
 
     public testBuildDeterministicGameSpecs(
@@ -158,19 +159,23 @@ test('AmaeKoromoService - Deterministic rank & East/South distribution (no Math.
     while (wIdx < windows.length) {
         const w = windows[wIdx]
         if (w !== undefined) {
-            const slice = run1.slice(0, w)
-            const r1 = slice.filter((g) => g.rank === 1).length
-            const r2 = slice.filter((g) => g.rank === 2).length
-            const r3 = slice.filter((g) => g.rank === 3).length
+            // Verify both oldest prefix and recent suffix (which AnalysisService queries via orderBy: { gameDate: desc })
+            const prefixSlice = run1.slice(0, w)
+            const recentSlice = run1.slice(-w)
+            for (const slice of [prefixSlice, recentSlice]) {
+                const r1 = slice.filter((g) => g.rank === 1).length
+                const r2 = slice.filter((g) => g.rank === 2).length
+                const r3 = slice.filter((g) => g.rank === 3).length
 
-            const rate1 = r1 / w
-            const rate2 = r2 / w
-            const rate3 = r3 / w
+                const rate1 = r1 / w
+                const rate2 = r2 / w
+                const rate3 = r3 / w
 
-            // Maximum discretization deviation at any window size is strictly within 1 game (< 0.06 at w=20, < 0.1 at w=10)
-            assert.ok(Math.abs(rate1 - 0.35) <= 0.06, `Window ${w} rank 1 rate ${rate1} deviates from 0.35`)
-            assert.ok(Math.abs(rate2 - 0.35) <= 0.06, `Window ${w} rank 2 rate ${rate2} deviates from 0.35`)
-            assert.ok(Math.abs(rate3 - 0.30) <= 0.05, `Window ${w} rank 3 rate ${rate3} deviates from 0.30`)
+                // Maximum discretization deviation at any window size is strictly within 1 game (< 0.06 at w=20, < 0.1 at w=10)
+                assert.ok(Math.abs(rate1 - 0.35) <= 0.06, `Window ${w} rank 1 rate ${rate1} deviates from 0.35`)
+                assert.ok(Math.abs(rate2 - 0.35) <= 0.06, `Window ${w} rank 2 rate ${rate2} deviates from 0.35`)
+                assert.ok(Math.abs(rate3 - 0.30) <= 0.05, `Window ${w} rank 3 rate ${rate3} deviates from 0.30`)
+            }
         }
         wIdx++
     }
@@ -284,4 +289,17 @@ test('AmaeKoromoService - Float startShanten calculation from extStats (never ha
     assert.strictEqual(fallbackNonDealer, 3.50)
     assert.notStrictEqual(fallbackDealer, 3)
     assert.notStrictEqual(fallbackDealer, 4)
+
+    // 6. Multi-round dealer rotation: (roundIndex % maxRank) === playerSeat
+    // In roundIndex = 1 (East 2), seat 1 is dealer, seat 0 is non-dealer
+    const round1Seat1Dealer = service.testCalculateStartShanten(1, extStats, 50, 50, '3p', 1)
+    const round1Seat0NonDealer = service.testCalculateStartShanten(0, extStats, 50, 50, '3p', 1)
+    assert.strictEqual(round1Seat1Dealer, 2.98)
+    assert.strictEqual(round1Seat0NonDealer, 3.42)
+
+    // In 4P mode with roundIndex = 2 (East 3), seat 2 is dealer, seat 0 is non-dealer
+    const round2Seat2Dealer4P = service.testCalculateStartShanten(2, extStats, 50, 50, '4p', 2)
+    const round2Seat0NonDealer4P = service.testCalculateStartShanten(0, extStats, 50, 50, '4p', 2)
+    assert.strictEqual(round2Seat2Dealer4P, 2.98)
+    assert.strictEqual(round2Seat0NonDealer4P, 3.42)
 })

@@ -1,5 +1,5 @@
 /*_ GEMINI THINKING _*/
-import { Injectable, NotFoundException } from '@nestjs/common'
+import { Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../../prisma/prisma.service'
 import { GameMode } from '@mahjong-sensei/types'
 
@@ -86,6 +86,8 @@ export interface SyncPlayerResult {
 
 @Injectable()
 export class AmaeKoromoService {
+    protected readonly logger: Logger = new Logger(AmaeKoromoService.name)
+
     protected readonly mirrors: readonly string[] = [
         'https://5-data.amae-koromo.com',
         'https://1.data.amae-koromo.com',
@@ -121,12 +123,19 @@ export class AmaeKoromoService {
                     signal: AbortSignal.timeout(5000)
                 })
                 if (!response.ok) {
+                    lastError = new Error(`HTTP ${response.status} ${response.statusText}`)
+                    this.logger.warn(
+                        `Mirror ${mirror} returned HTTP ${response.status} for ${normalizedPath}, falling back to next mirror`
+                    )
                     continue
                 }
                 const data = (await response.json()) as T
                 return data
             } catch (error) {
                 lastError = error instanceof Error ? error : new Error(String(error))
+                this.logger.warn(
+                    `Mirror ${mirror} failed for ${normalizedPath}: ${lastError.message}, falling back to next mirror`
+                )
                 continue
             }
         }
@@ -179,7 +188,8 @@ export class AmaeKoromoService {
         extStats: Partial<AmaeExtendedStats>,
         gameLuck: number = 50,
         avgLuck: number = 50,
-        mode: GameMode = '3p'
+        mode: GameMode = '3p',
+        roundIndex: number = 0
     ): number {
         /*_ GEMINI THINKING _*/
         const defaultAll = mode === '3p' ? 3.25 : 3.50
@@ -189,7 +199,12 @@ export class AmaeKoromoService {
 
         let baseShanten: number
 
-        if (playerSeat === 0) {
+        // In synthetic single-round generation (East 1, -r0), playerSeat === 0 is always East (Dealer/Oya).
+        // If multi-round games are supported in the future, dealer seat should rotate: (roundIndex % maxRank) === playerSeat.
+        const maxRank = mode === '3p' ? 3 : 4
+        const isDealer = (roundIndex % maxRank) === playerSeat
+
+        if (isDealer) {
             baseShanten = extStats.平均起手向听亲 && extStats.平均起手向听亲 > 0
                 ? extStats.平均起手向听亲
                 : (allShanten - (mode === '3p' ? 0.30 : 0.35))
@@ -636,7 +651,7 @@ export class AmaeKoromoService {
                 const playerSeat = specIdx % maxRank
                 const isDealIn = (rank === maxRank && !isBadLuck)
                 const isWin = (rank === 1 || (rank === 2 && specIdx % 2 === 0))
-                const startShanten = this.calculateStartShanten(playerSeat, extStats, gameLuck, luckScore, mode)
+                const startShanten = this.calculateStartShanten(playerSeat, extStats, gameLuck, luckScore, mode, 0)
                 const roundId = `${gameId}-r0`
 
                 gamesData.push({
