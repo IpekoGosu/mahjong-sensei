@@ -41,9 +41,9 @@ export class AnalysisController {
         @Query('tierLabel', new DefaultValuePipe('작걸 (Expert)')) tierLabel: string,
         @Query('luckScore', new DefaultValuePipe(50), ParseFloatPipe) luckScore: number,
         @Query('skillScore', new DefaultValuePipe(50), ParseFloatPipe) skillScore: number,
-        @Query('winRate', new DefaultValuePipe(0.22), ParseFloatPipe) winRate: number,
-        @Query('dealInRate', new DefaultValuePipe(0.13), ParseFloatPipe) dealInRate: number,
-        @Query('quadrant', new DefaultValuePipe('SKILLFUL_WIN')) quadrant: string
+        @Query('winRate', new DefaultValuePipe(22.0), ParseFloatPipe) winRate: number,
+        @Query('dealInRate', new DefaultValuePipe(13.0), ParseFloatPipe) dealInRate: number,
+        @Query('quadrant') quadrant?: string
     ): string {
         const validMode: GameMode = mode === '3p' ? '3p' : '4p'
         return this.tierBenchmarkService.generateShareCardSvg({

@@ -177,8 +177,8 @@ test('TierBenchmarkService - generateShareCardSvg', () => {
         tierLabel: '작호 (Master)',
         luckScore: 65.4,
         skillScore: 78.2,
-        winRate: 0.245,
-        dealInRate: 0.112,
+        winRate: 24.5,
+        dealInRate: 11.2,
         quadrant: 'SKILLFUL_WIN'
     })
 
@@ -206,8 +206,8 @@ test('TierBenchmarkService - generateShareCardSvg', () => {
         tierLabel: '작걸 (Expert)',
         luckScore: 32.1,
         skillScore: 75.0,
-        winRate: 0.28,
-        dealInRate: 0.14,
+        winRate: 28.0,
+        dealInRate: 14.0,
         quadrant: 'UNLUCKY_LOSS'
     })
     assert.strictEqual(unluckySvg.includes('UNLUCKY_LOSS'), true)
@@ -219,8 +219,8 @@ test('TierBenchmarkService - generateShareCardSvg', () => {
         tierLabel: '작사 (Adept)',
         luckScore: 35.0,
         skillScore: 40.0,
-        winRate: 0.18,
-        dealInRate: 0.17,
+        winRate: 18.0,
+        dealInRate: 17.0,
         quadrant: 'SLUMP_LOSS'
     })
     assert.strictEqual(slumpSvg.includes('SLUMP_LOSS'), true)
@@ -231,9 +231,90 @@ test('TierBenchmarkService - generateShareCardSvg', () => {
         tierLabel: '작걸 (Expert)',
         luckScore: 80.0,
         skillScore: 45.0,
-        winRate: 0.26,
-        dealInRate: 0.16,
+        winRate: 26.0,
+        dealInRate: 16.0,
         quadrant: 'LUCKY_FLUKE'
     })
     assert.strictEqual(flukeSvg.includes('LUCKY_FLUKE'), true)
+})
+
+test('TierBenchmarkService - low rate boundary without distortion (0 < rate <= 1.0%)', () => {
+    /*_ GEMINI THINKING _*/
+    const service = new TierBenchmarkService()
+
+    // Testing rates <= 1.0% that were previously distorted by > 1 heuristic
+    const svgOutput = service.generateShareCardSvg({
+        nickname: 'IronWall',
+        mode: '4p',
+        tierLabel: '작성 (Saint)',
+        luckScore: 50.0,
+        skillScore: 85.0,
+        winRate: 1.0,
+        dealInRate: 0.8,
+        quadrant: 'SKILLFUL_WIN'
+    })
+
+    assert.strictEqual(svgOutput.includes('1.0%'), true)
+    assert.strictEqual(svgOutput.includes('0.8%'), true)
+    assert.strictEqual(svgOutput.includes('100.0%'), false)
+    assert.strictEqual(svgOutput.includes('80.0%'), false)
+})
+
+test('TierBenchmarkService - quadrant fallback from coordinates when omitted or invalid', () => {
+    /*_ GEMINI THINKING _*/
+    const service = new TierBenchmarkService()
+
+    // 1. Skill >= 50, Luck >= 50 -> SKILLFUL_WIN
+    const q1Svg = service.generateShareCardSvg({
+        nickname: 'Player1',
+        mode: '4p',
+        tierLabel: '작호',
+        luckScore: 70.0,
+        skillScore: 80.0,
+        winRate: 25.0,
+        dealInRate: 10.0
+    })
+    assert.strictEqual(q1Svg.includes('SKILLFUL_WIN'), true)
+    assert.strictEqual(q1Svg.includes('실력 &amp; 운의 조화로운 승리'), true)
+
+    // 2. Skill >= 50, Luck < 50 -> UNLUCKY_LOSS
+    const q2Svg = service.generateShareCardSvg({
+        nickname: 'Player2',
+        mode: '4p',
+        tierLabel: '작호',
+        luckScore: 30.0,
+        skillScore: 80.0,
+        winRate: 22.0,
+        dealInRate: 11.0,
+        quadrant: ''
+    })
+    assert.strictEqual(q2Svg.includes('UNLUCKY_LOSS'), true)
+    assert.strictEqual(q2Svg.includes('억까 패배 (멘탈 케어)'), true)
+
+    // 3. Skill < 50, Luck < 50 -> SLUMP_LOSS
+    const q3Svg = service.generateShareCardSvg({
+        nickname: 'Player3',
+        mode: '4p',
+        tierLabel: '작사',
+        luckScore: 30.0,
+        skillScore: 40.0,
+        winRate: 15.0,
+        dealInRate: 18.0,
+        quadrant: 'unknown_quadrant'
+    })
+    assert.strictEqual(q3Svg.includes('SLUMP_LOSS'), true)
+    assert.strictEqual(q3Svg.includes('슬럼프 / 틸트 경고'), true)
+
+    // 4. Skill < 50, Luck >= 50 -> LUCKY_FLUKE
+    const q4Svg = service.generateShareCardSvg({
+        nickname: 'Player4',
+        mode: '4p',
+        tierLabel: '작걸',
+        luckScore: 75.0,
+        skillScore: 40.0,
+        winRate: 28.0,
+        dealInRate: 16.0
+    })
+    assert.strictEqual(q4Svg.includes('LUCKY_FLUKE'), true)
+    assert.strictEqual(q4Svg.includes('운빨 승리 (복기 추천)'), true)
 })
