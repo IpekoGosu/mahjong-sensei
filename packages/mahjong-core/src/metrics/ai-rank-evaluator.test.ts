@@ -1,3 +1,4 @@
+/*_ GEMINI THINKING _*/
 import test from 'node:test'
 import assert from 'node:assert'
 import {
@@ -47,6 +48,24 @@ class MockAiRankEvaluator extends AiRankEvaluator {
 
     public testComputeGradeFromScore(score: number): AiGrade {
         return this.computeGradeFromScore(score)
+    }
+
+    public testIsNextTileInCycle(indicator: string, tile: string, is3P: boolean = false): boolean {
+        return this.isNextTileInCycle(indicator, tile, is3P)
+    }
+
+    public testIsDoraOrRed(tile: string, doraIndicators: readonly string[], is3P: boolean = false): boolean {
+        return this.isDoraOrRed(tile, doraIndicators, is3P)
+    }
+
+    public testCalculateSituationScore(
+        rank: number,
+        finalScore: number,
+        roomType: string,
+        is3P: boolean,
+        luck: number
+    ): number {
+        return this.calculateSituationScore(rank, finalScore, roomType, is3P, luck)
     }
 }
 
@@ -145,9 +164,9 @@ test('MockAiRankEvaluator - Fine-grained tile danger hierarchy', () => {
     const sujiTerminalDanger = mock.testCalculateTileDanger('1p', ['4p'], emptyMap)
     assert.strictEqual(sujiTerminalDanger, 0.24)
 
-    // 6. Suji middle / live guest wind (0.34)
-    const sujiMiddleDanger = mock.testCalculateTileDanger('4p', ['1p'], emptyMap)
-    assert.strictEqual(sujiMiddleDanger, 0.34)
+    // 6. Suji 2/8 or 3/7 / live guest wind (0.34)
+    const suji2pDanger = mock.testCalculateTileDanger('2p', ['5p'], emptyMap)
+    assert.strictEqual(suji2pDanger, 0.34)
 
     const liveGuestWindDanger = mock.testCalculateTileDanger('4z', [], emptyMap, false, false, '1z', '2z')
     assert.strictEqual(liveGuestWindDanger, 0.34)
@@ -156,7 +175,10 @@ test('MockAiRankEvaluator - Fine-grained tile danger hierarchy', () => {
     const liveYakuhaiDanger = mock.testCalculateTileDanger('5z', [], emptyMap)
     assert.strictEqual(liveYakuhaiDanger, 0.48)
 
-    // 8. Musuji 1/9 (0.55)
+    // 8. Katasuji middle / Musuji 1/9 (0.55)
+    const katasujiMiddleDanger = mock.testCalculateTileDanger('4p', ['1p'], emptyMap)
+    assert.strictEqual(katasujiMiddleDanger, 0.55)
+
     const musuji19Danger = mock.testCalculateTileDanger('1p', [], emptyMap)
     assert.strictEqual(musuji19Danger, 0.55)
 
@@ -310,4 +332,116 @@ test('AiRankEvaluator - Summary game evaluation across S+ to D grades', () => {
     const resultD = evaluator.evaluateSummaryGame(inputD)
     assert.strictEqual(resultD.grade, 'D')
     assert.ok(resultD.aiScore < 60)
+})
+
+/*_ GEMINI THINKING _*/
+test('MockAiRankEvaluator - 3P manzu dora cycle (1m indicator -> 9m dora)', () => {
+    const mock = new MockAiRankEvaluator()
+
+    /*_ GEMINI THINKING _*/
+    // In 4P mode: 1m indicator -> 2m is dora
+    assert.strictEqual(mock.testIsNextTileInCycle('1m', '2m', false), true)
+    assert.strictEqual(mock.testIsNextTileInCycle('1m', '9m', false), false)
+    assert.strictEqual(mock.testIsDoraOrRed('2m', ['1m'], false), true)
+    assert.strictEqual(mock.testIsDoraOrRed('9m', ['1m'], false), false)
+
+    /*_ GEMINI THINKING _*/
+    // In 3P mode: 2m..8m are excluded, so 1m indicator -> 9m is dora, and 9m indicator -> 1m is dora
+    assert.strictEqual(mock.testIsNextTileInCycle('1m', '9m', true), true)
+    assert.strictEqual(mock.testIsNextTileInCycle('9m', '1m', true), true)
+    assert.strictEqual(mock.testIsNextTileInCycle('1m', '2m', true), false)
+    assert.strictEqual(mock.testIsDoraOrRed('9m', ['1m'], true), true)
+    assert.strictEqual(mock.testIsDoraOrRed('1m', ['9m'], true), true)
+    assert.strictEqual(mock.testIsDoraOrRed('2m', ['1m'], true), false)
+})
+
+/*_ GEMINI THINKING _*/
+test('AiRankEvaluator - 3P 3rd place receives last-place penalty in situationScore', () => {
+    const mock = new MockAiRankEvaluator()
+    const evaluator = new AiRankEvaluator()
+
+    /*_ GEMINI THINKING _*/
+    // Direct situationScore comparison:
+    // 4P mode 3rd place: 70 - 5 + 3 (Jade room) = 68
+    const sitScore4P = mock.testCalculateSituationScore(3, 20000, '옥탁 반장전', false, 50)
+    assert.strictEqual(sitScore4P, 68)
+
+    /*_ GEMINI THINKING _*/
+    // 3P mode 3rd place is last place (라스): 70 - 18 + 3 = 55
+    const sitScore3P = mock.testCalculateSituationScore(3, 20000, '옥탁 반장전', true, 50)
+    assert.strictEqual(sitScore3P, 55)
+
+    const baseInput: Omit<SummaryGameEvaluationInput, 'gameMode' | 'rank'> = {
+        finalScore: 20000,
+        roomType: '옥탁 반장전',
+        luckScore: 50,
+        skillScore: 70,
+        averageStartingShanten: 3.5,
+        winCount: 1,
+        dealInCount: 1,
+        totalRounds: 8,
+        dealerRounds: 2,
+        tileEfficiency: 0.8
+    }
+
+    /*_ GEMINI THINKING _*/
+    // In 4P mode, 3rd place receives a moderate penalty (-5): situationScore = 68 -> situationGrade 'C'
+    const eval4P = evaluator.evaluateSummaryGame({
+        ...baseInput,
+        gameMode: '4p',
+        rank: 3
+    })
+
+    /*_ GEMINI THINKING _*/
+    // In 3P mode, 3rd place is the last place (라스) and receives full last-place penalty (-18): situationScore = 55 -> situationGrade 'D'
+    const eval3P = evaluator.evaluateSummaryGame({
+        ...baseInput,
+        gameMode: '3p',
+        rank: 3
+    })
+
+    assert.strictEqual(eval4P.situationGrade, 'C')
+    assert.strictEqual(eval3P.situationGrade, 'D')
+    assert.ok(eval4P.aiScore > eval3P.aiScore)
+})
+
+/*_ GEMINI THINKING _*/
+test('MockAiRankEvaluator - Middle tile danger: Nakasuji (0.16) vs Katasuji (0.55) vs Musuji (1.00)', () => {
+    const mock = new MockAiRankEvaluator()
+    const emptyMap = new Map<string, number>()
+
+    /*_ GEMINI THINKING _*/
+    // 4p Nakasuji: both 1p and 7p discarded -> danger = 0.16
+    const nakasuji4p = mock.testCalculateTileDanger('4p', ['1p', '7p'], emptyMap)
+    assert.strictEqual(nakasuji4p, 0.16)
+
+    /*_ GEMINI THINKING _*/
+    // 4p Katasuji: only 1p discarded (or only 7p discarded) -> danger = 0.55
+    const katasuji4pFrom1 = mock.testCalculateTileDanger('4p', ['1p'], emptyMap)
+    assert.strictEqual(katasuji4pFrom1, 0.55)
+    const katasuji4pFrom7 = mock.testCalculateTileDanger('4p', ['7p'], emptyMap)
+    assert.strictEqual(katasuji4pFrom7, 0.55)
+
+    /*_ GEMINI THINKING _*/
+    // 4p Musuji: neither 1p nor 7p discarded -> danger = 1.00
+    const musuji4p = mock.testCalculateTileDanger('4p', [], emptyMap)
+    assert.strictEqual(musuji4p, 1.00)
+
+    /*_ GEMINI THINKING _*/
+    // 5s Katasuji vs Nakasuji
+    const nakasuji5s = mock.testCalculateTileDanger('5s', ['2s', '8s'], emptyMap)
+    assert.strictEqual(nakasuji5s, 0.16)
+    const katasuji5s = mock.testCalculateTileDanger('5s', ['2s'], emptyMap)
+    assert.strictEqual(katasuji5s, 0.55)
+    const musuji5s = mock.testCalculateTileDanger('5s', [], emptyMap)
+    assert.strictEqual(musuji5s, 1.00)
+
+    /*_ GEMINI THINKING _*/
+    // 6m Katasuji vs Nakasuji
+    const nakasuji6m = mock.testCalculateTileDanger('6m', ['3m', '9m'], emptyMap)
+    assert.strictEqual(nakasuji6m, 0.16)
+    const katasuji6m = mock.testCalculateTileDanger('6m', ['9m'], emptyMap)
+    assert.strictEqual(katasuji6m, 0.55)
+    const musuji6m = mock.testCalculateTileDanger('6m', [], emptyMap)
+    assert.strictEqual(musuji6m, 1.00)
 })

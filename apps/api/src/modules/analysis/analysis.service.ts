@@ -111,9 +111,15 @@ export class AnalysisService {
                 }
             }
 
-            const avgShanten = myRoundsCount > 0 ? Number((totalShanten / myRoundsCount).toFixed(1)) : 3.5
+            const avgShanten = myRoundsCount > 0 ? Number((totalShanten / myRoundsCount).toFixed(2)) : 3.5
 
             /*_ GEMINI THINKING _*/
+            // 단일 라운드만 저장된 합성 대국(rounds.length <= 1 또는 myRoundsCount <= 1)의 경우
+            // roomType을 참조하여 동풍전은 4국, 반장전은 8국을 표준 분모로 사용하여 공수 평점 극단화 방지
+            const effectiveTotalRounds = (p.game.rounds.length > 1 && myRoundsCount > 1)
+                ? p.game.rounds.length
+                : (p.game.roomType?.includes('동풍') ? 4 : 8)
+
             const aiEvaluation = this.aiRankEvaluator.evaluateSummaryGame({
                 rank: p.finalRank,
                 finalScore: p.finalScore,
@@ -124,7 +130,7 @@ export class AnalysisService {
                 averageStartingShanten: avgShanten,
                 winCount,
                 dealInCount,
-                totalRounds: p.game.rounds.length || 8
+                totalRounds: effectiveTotalRounds
             })
 
             games.push({

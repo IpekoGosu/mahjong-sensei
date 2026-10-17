@@ -285,7 +285,7 @@ export class AiRankEvaluator {
         const matchRate = Number(((matchedTurns / evaluatedTurns) * 100).toFixed(1))
         const attackScore = Math.max(0, Math.min(100, Math.round(100 - (attackMistakes * 8))))
         const defenseScore = Math.max(0, Math.min(100, Math.round(100 - (dangerPushes * 12) - (totalDealInScore / 600))))
-        const situationScore = Math.max(0, Math.min(100, Math.round(80 + (finalRank === 1 ? 15 : finalRank === 2 ? 5 : finalRank === 3 ? -5 : -15))))
+        const situationScore = Math.max(0, Math.min(100, Math.round(80 + (finalRank === 1 ? 15 : finalRank === 2 ? 5 : finalRank === 3 ? (is3P ? -15 : -5) : -15))))
 
         const aiScore = Math.max(0, Math.min(100, Math.round(
             (matchRate * 0.40) +
@@ -345,31 +345,14 @@ export class AiRankEvaluator {
         const defenseScore = Math.max(0, Math.min(100, Math.round(rawDefense)))
 
         // Situation evaluation (0..100)
-        let rawSituation = 70
-        if (rank === 1) {
-            rawSituation += 15
-            if (finalScore >= 35000) {
-                rawSituation += 8
-            }
-        } else if (rank === 2) {
-            rawSituation += 5
-        } else if (rank === 3) {
-            rawSituation -= 5
-        } else if (rank === 4) {
-            rawSituation -= 18
-        }
-
-        const roomType = params.roomType ?? ''
-        if (roomType.includes('왕좌') || roomType.includes('Throne')) {
-            rawSituation += 6
-        } else if (roomType.includes('옥') || roomType.includes('Jade')) {
-            rawSituation += 3
-        }
-
-        if (luck < 40 && rank <= 2) {
-            rawSituation += 10
-        }
-        const situationScore = Math.max(0, Math.min(100, Math.round(rawSituation)))
+        const is3P = params.gameMode === '3p' || (params.roomType ?? '').includes('3인')
+        const situationScore = this.calculateSituationScore(
+            rank,
+            finalScore,
+            params.roomType ?? '',
+            is3P,
+            luck
+        )
 
         // Match rate (Mortal/MAKA AI consistency)
         let matchRate = Number((50 + (skill * 0.42) + (tileEfficiency * 8)).toFixed(1))
@@ -427,7 +410,7 @@ export class AiRankEvaluator {
         // Hand dora count
         let handDoraCount = 0
         for (const t of resultingHand) {
-            if (this.isDoraOrRed(t, context.doraIndicators)) {
+            if (this.isDoraOrRed(t, context.doraIndicators, is3P)) {
                 handDoraCount++
             }
         }
@@ -449,7 +432,7 @@ export class AiRankEvaluator {
 
         // Defense expected loss
         let totalDanger = 0
-        const isCandidateDora = this.isDoraOrRed(candidate, context.doraIndicators)
+        const isCandidateDora = this.isDoraOrRed(candidate, context.doraIndicators, is3P)
 
         for (const seat of context.activeRiichiSeats) {
             const oppKawa = context.opponentKawas.get(seat) ?? []
@@ -602,14 +585,14 @@ export class AiRankEvaluator {
             const hasSuji = normDiscards.has(`4${suit}`)
             baseDanger = hasSuji ? 0.34 : 0.88 // Suji 7 vs Musuji 3/7
         } else if (num === 4) {
-            const hasSuji = normDiscards.has(`1${suit}`) || normDiscards.has(`7${suit}`)
-            baseDanger = hasSuji ? 0.34 : 1.00 // Suji middle vs Musuji 4/5/6
+            const hasKatasuji = normDiscards.has(`1${suit}`) || normDiscards.has(`7${suit}`)
+            baseDanger = hasKatasuji ? 0.55 : 1.00 // Katasuji (0.55) vs full Musuji (1.00)
         } else if (num === 5) {
-            const hasSuji = normDiscards.has(`2${suit}`) || normDiscards.has(`8${suit}`)
-            baseDanger = hasSuji ? 0.34 : 1.00 // Suji middle vs Musuji 4/5/6
+            const hasKatasuji = normDiscards.has(`2${suit}`) || normDiscards.has(`8${suit}`)
+            baseDanger = hasKatasuji ? 0.55 : 1.00 // Katasuji (0.55) vs full Musuji (1.00)
         } else if (num === 6) {
-            const hasSuji = normDiscards.has(`3${suit}`) || normDiscards.has(`9${suit}`)
-            baseDanger = hasSuji ? 0.34 : 1.00 // Suji middle vs Musuji 4/5/6
+            const hasKatasuji = normDiscards.has(`3${suit}`) || normDiscards.has(`9${suit}`)
+            baseDanger = hasKatasuji ? 0.55 : 1.00 // Katasuji (0.55) vs full Musuji (1.00)
         }
 
         if (tileIsDora) {
@@ -620,6 +603,41 @@ export class AiRankEvaluator {
         }
 
         return Number(baseDanger.toFixed(4))
+    }
+
+    /*_ GEMINI THINKING _*/
+    // 3인 마작(3P)에서는 3위가 최하위(라스)이므로 -18점 감점을 적용하고 1위 기준 점수를 45,000점으로 보정
+    protected calculateSituationScore(
+        rank: number,
+        finalScore: number,
+        roomType: string,
+        is3P: boolean,
+        luck: number
+    ): number {
+        let rawSituation = 70
+        if (rank === 1) {
+            rawSituation += 15
+            if (finalScore >= (is3P ? 45000 : 35000)) {
+                rawSituation += 8
+            }
+        } else if (rank === 2) {
+            rawSituation += 5
+        } else if (rank === 3) {
+            rawSituation -= is3P ? 18 : 5
+        } else if (rank === 4) {
+            rawSituation -= 18
+        }
+
+        if (roomType.includes('왕좌') || roomType.includes('Throne')) {
+            rawSituation += 6
+        } else if (roomType.includes('옥') || roomType.includes('Jade')) {
+            rawSituation += 3
+        }
+
+        if (luck < 40 && rank <= 2) {
+            rawSituation += 10
+        }
+        return Math.max(0, Math.min(100, Math.round(rawSituation)))
     }
 
     /*_ GEMINI THINKING _*/
@@ -753,23 +771,36 @@ export class AiRankEvaluator {
         return tile
     }
 
-    protected isDoraOrRed(tile: string, doraIndicators: readonly string[]): boolean {
+    /*_ GEMINI THINKING _*/
+    // 3인 마작(3P)에서는 2m~8m 만수패가 제외되므로 1m 표시패 -> 9m 도라, 9m 표시패 -> 1m 도라 순환을 지원하도록 is3P 플래그 적용
+    protected isDoraOrRed(tile: string, doraIndicators: readonly string[], is3P: boolean = false): boolean {
         if (tile.startsWith('0')) {
             return true
         }
         const norm = this.normalizeTile(tile)
         for (const indicator of doraIndicators) {
-            if (this.isNextTileInCycle(indicator, norm)) {
+            if (this.isNextTileInCycle(indicator, norm, is3P)) {
                 return true
             }
         }
         return false
     }
 
-    protected isNextTileInCycle(indicator: string, tile: string): boolean {
+    /*_ GEMINI THINKING _*/
+    protected isNextTileInCycle(indicator: string, tile: string, is3P: boolean = false): boolean {
         const normInd = this.normalizeTile(indicator)
         const suit = normInd.slice(-1)
         const num = Number.parseInt(normInd.slice(0, -1), 10)
+
+        if (is3P && suit === 'm') {
+            if (num === 1) {
+                return tile === '9m'
+            }
+            if (num === 9) {
+                return tile === '1m'
+            }
+            return false
+        }
 
         if (suit === 'z') {
             if (num >= 1 && num <= 4) {
