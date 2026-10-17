@@ -11,17 +11,21 @@ export class ShantenCalculator {
     public calculate(tiles: readonly string[], is3P: boolean = false): number {
         const counts = TileConverter.handToCountArray(tiles)
         const regular = this.calculateRegular(counts, is3P)
-        const chitoi = this.calculateChitoitsu(counts)
+        const chitoi = this.calculateChitoitsu(counts, is3P)
         const kokushi = this.calculateKokushi(counts)
 
         return Math.min(regular, chitoi, kokushi)
     }
 
-    public calculateChitoitsu(counts: readonly number[]): number {
+    public calculateChitoitsu(counts: readonly number[], is3P: boolean = false): number {
+        /*_ GEMINI THINKING _*/
         let pairs = 0
         let kinds = 0
 
         for (let i = 0; i < TILE_COUNT; i++) {
+            if (is3P && i >= 1 && i <= 7) {
+                continue
+            }
             const count = counts[i] ?? 0
             if (count >= 2) {
                 pairs++
