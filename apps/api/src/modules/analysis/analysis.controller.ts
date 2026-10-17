@@ -1,10 +1,15 @@
-import { Controller, Get, Query, ParseIntPipe, DefaultValuePipe } from '@nestjs/common'
+/*_ GEMINI THINKING _*/
+import { Controller, Get, Query, ParseIntPipe, ParseFloatPipe, DefaultValuePipe, Header } from '@nestjs/common'
 import { AnalysisService } from './analysis.service'
+import { TierBenchmarkService, TierComparisonResult } from './tier-benchmark.service'
 import { GameMode, RollingWindowSize, RollingWindowStats } from '@mahjong-sensei/types'
 
 @Controller('analysis')
 export class AnalysisController {
-    public constructor(private readonly analysisService: AnalysisService) {}
+    public constructor(
+        private readonly analysisService: AnalysisService,
+        private readonly tierBenchmarkService: TierBenchmarkService
+    ) {}
 
     @Get('rolling')
     public async getRolling(
@@ -16,4 +21,41 @@ export class AnalysisController {
         const validMode: GameMode = mode === '4p' ? '4p' : '3p'
         return await this.analysisService.getRollingStats(accountId, validWindow, validMode)
     }
+
+    @Get('benchmarks')
+    public getBenchmarks(
+        @Query('mode') mode: GameMode = '4p',
+        @Query('tier', new DefaultValuePipe('EXPERT')) tier: string,
+        @Query('luckScore', new DefaultValuePipe(50), ParseFloatPipe) luckScore: number,
+        @Query('skillScore', new DefaultValuePipe(50), ParseFloatPipe) skillScore: number
+    ): TierComparisonResult {
+        const validMode: GameMode = mode === '3p' ? '3p' : '4p'
+        return this.tierBenchmarkService.getTierComparison(validMode, tier, luckScore, skillScore)
+    }
+
+    @Get('share-card')
+    @Header('Content-Type', 'image/svg+xml')
+    public getShareCard(
+        @Query('nickname', new DefaultValuePipe('마작선수')) nickname: string,
+        @Query('mode') mode: GameMode = '4p',
+        @Query('tierLabel', new DefaultValuePipe('작걸 (Expert)')) tierLabel: string,
+        @Query('luckScore', new DefaultValuePipe(50), ParseFloatPipe) luckScore: number,
+        @Query('skillScore', new DefaultValuePipe(50), ParseFloatPipe) skillScore: number,
+        @Query('winRate', new DefaultValuePipe(0.22), ParseFloatPipe) winRate: number,
+        @Query('dealInRate', new DefaultValuePipe(0.13), ParseFloatPipe) dealInRate: number,
+        @Query('quadrant', new DefaultValuePipe('SKILLFUL_WIN')) quadrant: string
+    ): string {
+        const validMode: GameMode = mode === '3p' ? '3p' : '4p'
+        return this.tierBenchmarkService.generateShareCardSvg({
+            nickname,
+            mode: validMode,
+            tierLabel,
+            luckScore,
+            skillScore,
+            winRate,
+            dealInRate,
+            quadrant
+        })
+    }
 }
+
