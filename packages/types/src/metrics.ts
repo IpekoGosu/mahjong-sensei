@@ -19,6 +19,7 @@ export interface RoundLuckMetric {
     readonly uradoraCount: number
     readonly unavoidableDamage: number
     readonly luckScore: number
+    readonly isWin?: boolean
 }
 
 export interface RoundSkillMetric {

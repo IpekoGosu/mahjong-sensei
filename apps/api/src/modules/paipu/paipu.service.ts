@@ -119,7 +119,8 @@ export class PaipuService {
                             tsumoLossScore: m.tsumoLossScore,
                             tileEfficiency: m.tileEfficiency,
                             luckScore: m.luckScore,
-                            skillScore: m.skillScore
+                            skillScore: m.skillScore,
+                            isWin: m.isWin
                         }
                     })
                 }

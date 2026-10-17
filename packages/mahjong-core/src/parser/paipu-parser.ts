@@ -23,6 +23,7 @@ export interface ParsedGameResult {
         readonly dealInScore: number
         readonly tsumoLossScore: number
         readonly tileEfficiency: number
+        readonly isWin: boolean
     }[]
 }
 
@@ -44,6 +45,7 @@ export class PaipuParser {
             dealInScore: number
             tsumoLossScore: number
             tileEfficiency: number
+            isWin: boolean
         }[] = []
 
         const playerCount = (record.players.length === 3 || record.roomType.includes('3인')) ? 3 : 4
@@ -78,7 +80,8 @@ export class PaipuParser {
                     uradoraHits: luckMetric.uradoraCount,
                     dealInScore: skillMetric.dealInMistakeRate > 0 ? 8000 : 0,
                     tsumoLossScore: luckMetric.unavoidableDamage,
-                    tileEfficiency: skillMetric.tileEfficiencyRate
+                    tileEfficiency: skillMetric.tileEfficiencyRate,
+                    isWin: luckMetric.isWin ?? false
                 })
             }
 
@@ -117,7 +120,7 @@ export class PaipuParser {
                 accountId: p.accountId,
                 nickname: p.nickname,
                 seat,
-                rank: seatRanks[seat] ?? 4,
+                rank: seatRanks[seat] ?? (playerCount === 3 ? 3 : 4),
                 finalScore: finalScores[seat] ?? 25000,
                 luckScore: Number((totalLuck / roundCount).toFixed(1)),
                 skillScore: Number((totalSkill / roundCount).toFixed(1))

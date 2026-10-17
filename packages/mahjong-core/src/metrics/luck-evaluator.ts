@@ -16,6 +16,7 @@ export class LuckEvaluator {
         let effectiveDraws = 0
         let uradoraHits = 0
         let unavoidableDamage = 0
+        let isWin = false
 
         // Track hand through round actions
         const currentHand = [...startingHand]
@@ -39,6 +40,7 @@ export class LuckEvaluator {
             } else if (action.type === 'RecordHule') {
                 for (const h of action.hules) {
                     if (h.seat === targetSeat) {
+                        isWin = true
                         uradoraHits += h.uradoras ? h.uradoras.length : 0
                     } else {
                         // Check if opponent won by tsumo and targeted seat lost points
@@ -71,7 +73,8 @@ export class LuckEvaluator {
             drawEfficiencyRatio: Number(drawEfficiencyRatio.toFixed(2)),
             uradoraCount: uradoraHits,
             unavoidableDamage,
-            luckScore
+            luckScore,
+            isWin
         }
     }
 
