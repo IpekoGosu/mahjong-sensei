@@ -192,12 +192,27 @@ export class PaipuService {
             skillScore: p.skillScore
         }))
 
+        const rounds = game.rounds.map((r) => {
+            const roundNames = ['동1국', '동2국', '동3국', '동4국', '남1국', '남2국', '남3국', '남4국']
+            const name = roundNames[r.roundIndex] ?? `동${r.roundIndex + 1}국`
+            return {
+                roundIndex: r.roundIndex,
+                roundName: name,
+                honba: r.honba,
+                riichiSticks: r.riichiSticks,
+                initialScores: [25000, 25000, 25000, 25000] as const,
+                doraIndicators: [],
+                startingHands: [[], [], [], []] as const,
+                actions: []
+            }
+        })
+
         return {
             id: game.id,
             roomName: game.roomType,
             timestamp: game.gameDate.getTime(),
             players,
-            rounds: []
+            rounds
         }
     }
 }
