@@ -102,7 +102,9 @@ export class AnalysisService {
                     if (metric.dealInScore > 0) {
                         dealInCount++
                     }
-                    if (metric.luckScore > 65) {
+                    /*_ GEMINI THINKING _*/
+                    // 화료 여부는 RoundMetric의 isWin 플래그를 기준으로 정확하게 판정
+                    if (metric.isWin) {
                         winCount++
                     }
                 }
