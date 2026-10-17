@@ -2,6 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert'
 import { ShantenCalculator } from './shanten'
 import { MetricCalculator } from './metrics'
+import { LuckEvaluator } from './metrics/luck-evaluator'
+import { MajsoulRoundRecord } from './parser/types'
+import { TileConverter } from './tiles'
 
 test('ShantenCalculator - Tenpai and Agari tests', () => {
     const calc = new ShantenCalculator()
@@ -66,4 +69,146 @@ test('MetricCalculator - Quadrant and Luck Score tests', () => {
         unavoidableDamage: 0
     })
     assert.ok(luckScore > 50)
+})
+
+test('ShantenCalculator - 3P (Sanma) mode shanten tests', () => {
+    const calc = new ShantenCalculator()
+
+    // 1. Manzu sequences: in 4P mode (123m 456p 789s 222p 11p) is Agari (-1),
+    // but in 3P mode 123m cannot form a sequence -> 1-shanten
+    const handWithManzuSequence = [
+        '1m', '2m', '3m',
+        '4p', '5p', '6p',
+        '7s', '8s', '9s',
+        '2p', '2p', '2p',
+        '1p', '1p'
+    ]
+    assert.strictEqual(calc.calculate(handWithManzuSequence, false), -1)
+    assert.strictEqual(calc.calculate(handWithManzuSequence, true), 1)
+
+    // 2. 1m and 9m can form triplets in 3P mode -> Agari (-1)
+    const handWith1mTriplet = [
+        '1m', '1m', '1m',
+        '4p', '5p', '6p',
+        '7s', '8s', '9s',
+        '2p', '2p', '2p',
+        '1p', '1p'
+    ]
+    assert.strictEqual(calc.calculate(handWith1mTriplet, true), -1)
+
+    const handWith9mTriplet = [
+        '9m', '9m', '9m',
+        '4p', '5p', '6p',
+        '7s', '8s', '9s',
+        '2p', '2p', '2p',
+        '1p', '1p'
+    ]
+    assert.strictEqual(calc.calculate(handWith9mTriplet, true), -1)
+
+    // 3. 1m and 9m can form pairs (head) in 3P mode -> Agari (-1)
+    const handWith1mPair = [
+        '1m', '1m',
+        '4p', '5p', '6p',
+        '7s', '8s', '9s',
+        '1p', '2p', '3p',
+        '2s', '3s', '4s'
+    ]
+    assert.strictEqual(calc.calculate(handWith1mPair, true), -1)
+
+    const handWith9mPair = [
+        '9m', '9m',
+        '4p', '5p', '6p',
+        '7s', '8s', '9s',
+        '1p', '2p', '3p',
+        '2s', '3s', '4s'
+    ]
+    assert.strictEqual(calc.calculate(handWith9mPair, true), -1)
+
+    // 4. Manzu partial sequences (taatsu) are not allowed in 3P mode:
+    // Penchan: 1m 2m with 3 complete melds + 2 isolated honors (13 tiles)
+    const penchanHand = [
+        '1m', '2m',
+        '4p', '5p', '6p',
+        '7s', '8s', '9s',
+        '1p', '2p', '3p',
+        '1z', '2z'
+    ]
+    // In 4P: 3 melds + 1 taatsu (1m-2m) = 1-shanten
+    assert.strictEqual(calc.calculate(penchanHand, false), 1)
+    // In 3P: 3 melds + 0 taatsu = 2-shanten
+    assert.strictEqual(calc.calculate(penchanHand, true), 2)
+
+    // Kanchan: 1m 3m with 3 complete melds + 2 isolated honors (13 tiles)
+    const kanchanHand = [
+        '1m', '3m',
+        '4p', '5p', '6p',
+        '7s', '8s', '9s',
+        '1p', '2p', '3p',
+        '1z', '2z'
+    ]
+    assert.strictEqual(calc.calculate(kanchanHand, false), 1)
+    assert.strictEqual(calc.calculate(kanchanHand, true), 2)
+
+    // calculateRegular with counts
+    const countsPenchan = TileConverter.handToCountArray(penchanHand)
+    assert.strictEqual(calc.calculateRegular(countsPenchan, false), 1)
+    assert.strictEqual(calc.calculateRegular(countsPenchan, true), 2)
+})
+
+test('LuckEvaluator - RecordBaBei (Kita) removes 4z and increments dora count', () => {
+    const luckEval = new LuckEvaluator()
+
+    const roundWithKita: MajsoulRoundRecord = {
+        header: {
+            type: 'RecordNewRound',
+            chang: 0,
+            ju: 0,
+            ben: 0,
+            liqi: 0,
+            scores: [35000, 35000, 35000, 0],
+            dora: '8p',
+            hands: [
+                // Seat 0 starting hand contains '4z' (Pei) and tenpai with 4p5p6p 7s8s9s 1p2p3p 2s2s
+                ['4z', '4p', '5p', '6p', '7s', '8s', '9s', '1p', '2p', '3p', '2s', '2s', '1s'],
+                ['1p', '9p', '1s', '9s', '1z', '2z', '3z', '5z', '6z', '7z', '1m', '9m', '2p'],
+                ['1p', '9p', '1s', '9s', '1z', '2z', '3z', '5z', '6z', '7z', '1m', '9m', '3p'],
+                []
+            ]
+        },
+        actions: [
+            // Seat 0 declares Kita (RecordBaBei) with 4z
+            {
+                type: 'RecordBaBei',
+                seat: 0,
+                isMoqie: false
+            },
+            // Seat 0 receives replacement tile (rinshan draw)
+            {
+                type: 'RecordDealTile',
+                seat: 0,
+                tile: '1s'
+            },
+            // Seat 0 wins
+            {
+                type: 'RecordHule',
+                hules: [
+                    {
+                        seat: 0,
+                        deltaScores: [8000, -4000, -4000, 0],
+                        handScore: 8000,
+                        fan: 3,
+                        fu: 30,
+                        yaku: ['멘젠쯔모', '키타 1'],
+                        uradoras: []
+                    }
+                ]
+            }
+        ]
+    }
+
+    const metric = luckEval.evaluateRound(roundWithKita, 0)
+    // Starting dora was 0 (no 5p/red dora), after RecordBaBei it increments to 1
+    assert.strictEqual(metric.startingDoraCount, 1)
+    assert.strictEqual(metric.isWin, true)
+    assert.ok(metric.luckScore > 0)
 })

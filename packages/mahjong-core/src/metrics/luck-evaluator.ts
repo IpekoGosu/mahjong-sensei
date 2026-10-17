@@ -8,9 +8,10 @@ export class LuckEvaluator {
 
     public evaluateRound(round: MajsoulRoundRecord, targetSeat: SeatIndex): RoundLuckMetric {
         /*_ GEMINI THINKING _*/
+        const is3P = round.actions.some((a) => a.type === 'RecordBaBei') || (round.header.hands[3]?.length ?? 0) === 0
         const startingHand = round.header.hands[targetSeat] ?? []
-        const startShanten = this.shantenCalc.calculate(startingHand)
-        const startDoraCount = this.countDora(startingHand, [round.header.dora])
+        const startShanten = this.shantenCalc.calculate(startingHand, is3P)
+        let startDoraCount = this.countDora(startingHand, [round.header.dora])
 
         let drawCount = 0
         let effectiveDraws = 0
@@ -26,7 +27,7 @@ export class LuckEvaluator {
             if (action.type === 'RecordDealTile' && action.seat === targetSeat) {
                 drawCount++
                 currentHand.push(action.tile)
-                const newShanten = this.shantenCalc.calculate(currentHand)
+                const newShanten = this.shantenCalc.calculate(currentHand, is3P)
                 // If draw reduced shanten or maintained tenpai
                 if (newShanten < currentShanten) {
                     effectiveDraws++
@@ -36,7 +37,14 @@ export class LuckEvaluator {
                 if (idx !== -1) {
                     currentHand.splice(idx, 1)
                 }
-                currentShanten = this.shantenCalc.calculate(currentHand)
+                currentShanten = this.shantenCalc.calculate(currentHand, is3P)
+            } else if (action.type === 'RecordBaBei' && action.seat === targetSeat) {
+                const idx = currentHand.indexOf('4z')
+                if (idx !== -1) {
+                    currentHand.splice(idx, 1)
+                }
+                startDoraCount++
+                currentShanten = this.shantenCalc.calculate(currentHand, is3P)
             } else if (action.type === 'RecordHule') {
                 for (const h of action.hules) {
                     if (h.seat === targetSeat) {
