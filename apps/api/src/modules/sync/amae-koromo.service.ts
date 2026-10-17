@@ -1,8 +1,9 @@
+/*_ GEMINI THINKING _*/
 import { Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../../prisma/prisma.service'
 import { GameMode } from '@mahjong-sensei/types'
 
-interface AmaeSearchResult {
+export interface AmaeSearchResult {
     readonly id: number
     readonly nickname: string
     readonly level: {
@@ -10,10 +11,10 @@ interface AmaeSearchResult {
         readonly score: number
         readonly delta: number
     }
-    readonly latest_timestamp?: number
+    readonly latest_timestamp?: number | undefined
 }
 
-interface AmaeExtendedStats {
+export interface AmaeExtendedStats {
     readonly count: number
     readonly 和牌率: number
     readonly 自摸率: number
@@ -29,15 +30,44 @@ interface AmaeExtendedStats {
     readonly 里宝率: number
     readonly 先制率: number
     readonly 平均起手向听: number
-    readonly played_modes?: readonly number[]
+    readonly 平均起手向听亲?: number | undefined
+    readonly 平均起手向听子?: number | undefined
+    readonly played_modes?: readonly number[] | undefined
 }
 
-interface AmaeRankStats {
+export interface AmaeRankStats {
     readonly count: number
     readonly rank_rates: readonly [number, number, number, number] | readonly [number, number, number]
     readonly rank_avg_score: readonly [number, number, number, number] | readonly [number, number, number]
     readonly avg_rank: number
-    readonly negative_rate?: number
+    readonly negative_rate?: number | undefined
+    readonly played_modes?: readonly number[] | undefined
+}
+
+export interface ModeGroupConfig {
+    readonly count: number
+    readonly rankRates: readonly number[]
+    readonly rankAvgScore: readonly number[]
+    readonly roomType: string
+    readonly modeId?: number | undefined
+}
+
+export interface BuildGameSpecsParams {
+    readonly targetCount: number
+    readonly mode: GameMode
+    readonly eastGroup?: ModeGroupConfig | null | undefined
+    readonly southGroup?: ModeGroupConfig | null | undefined
+    readonly fallbackRankRates?: readonly number[] | undefined
+    readonly fallbackAvgScores?: readonly number[] | undefined
+}
+
+export interface DeterministicGameSpec {
+    readonly gameIndex: number
+    readonly rank: number
+    readonly finalScore: number
+    readonly roomType: string
+    readonly isEast: boolean
+    readonly modeId?: number | undefined
 }
 
 export interface SyncPlayerResult {
@@ -56,7 +86,275 @@ export interface SyncPlayerResult {
 
 @Injectable()
 export class AmaeKoromoService {
-    public constructor(private readonly prisma: PrismaService) {}
+    protected readonly mirrors: readonly string[] = [
+        'https://5-data.amae-koromo.com',
+        'https://1.data.amae-koromo.com',
+        'https://2.data.amae-koromo.com',
+        'https://4.data.amae-koromo.com'
+    ]
+
+    protected static readonly MODE_NAMES: Readonly<Record<number, string>> = {
+        21: '3인 금탁 동풍전',
+        22: '3인 금탁 반장전',
+        23: '3인 옥탁 동풍전',
+        24: '3인 옥탁 반장전',
+        25: '3인 왕좌탁 동풍전',
+        26: '3인 왕좌탁 반장전',
+        8: '4인 금탁 동풍전',
+        9: '4인 금탁 반장전',
+        11: '4인 옥탁 동풍전',
+        12: '4인 옥탁 반장전',
+        15: '4인 왕좌탁 동풍전',
+        16: '4인 왕좌탁 반장전'
+    }
+
+    public constructor(protected readonly prisma: PrismaService) {}
+
+    protected async fetchJsonWithFallback<T>(path: string): Promise<T> {
+        /*_ GEMINI THINKING _*/
+        const normalizedPath = path.startsWith('/') ? path : `/${path}`
+        let lastError: Error | null = null
+
+        for (const mirror of this.mirrors) {
+            try {
+                const response = await fetch(`${mirror}${normalizedPath}`, {
+                    signal: AbortSignal.timeout(5000)
+                })
+                if (!response.ok) {
+                    continue
+                }
+                const data = (await response.json()) as T
+                return data
+            } catch (error) {
+                lastError = error instanceof Error ? error : new Error(String(error))
+                continue
+            }
+        }
+
+        throw new Error(
+            `Failed to fetch from all Amae-Koromo mirrors for path "${path}". Last error: ${lastError?.message ?? 'unknown'}`
+        )
+    }
+
+    protected resolveRoomType(modeId: number): string {
+        return AmaeKoromoService.MODE_NAMES[modeId] ?? (modeId >= 20 ? '3인 일반전' : '4인 일반전')
+    }
+
+    protected getRoomTypeByModeId(modeId: number): string {
+        return this.resolveRoomType(modeId)
+    }
+
+    protected resolvePrimaryModeId(
+        playedModes: readonly number[],
+        mode: GameMode,
+        isEast: boolean,
+        levelId?: number
+    ): number {
+        const candidateModes = mode === '3p'
+            ? (isEast ? [25, 23, 21] : [26, 24, 22])
+            : (isEast ? [15, 11, 8] : [16, 12, 9])
+
+        for (const candidate of candidateModes) {
+            if (playedModes.includes(candidate)) {
+                return candidate
+            }
+        }
+
+        if (levelId !== undefined) {
+            const isThrone = levelId >= (mode === '3p' ? 20500 : 10500)
+            const isJade = levelId >= (mode === '3p' ? 20400 : 10400)
+            if (isThrone) {
+                return candidateModes[0] ?? (mode === '3p' ? (isEast ? 25 : 26) : (isEast ? 15 : 16))
+            }
+            if (isJade) {
+                return candidateModes[1] ?? (mode === '3p' ? (isEast ? 23 : 24) : (isEast ? 11 : 12))
+            }
+        }
+
+        return candidateModes[2] ?? (mode === '3p' ? (isEast ? 21 : 22) : (isEast ? 8 : 9))
+    }
+
+    protected calculateStartShanten(
+        playerSeat: number,
+        extStats: Partial<AmaeExtendedStats>,
+        gameLuck: number = 50,
+        avgLuck: number = 50,
+        mode: GameMode = '3p'
+    ): number {
+        /*_ GEMINI THINKING _*/
+        const defaultAll = mode === '3p' ? 3.25 : 3.50
+        const allShanten = extStats.平均起手向听 && extStats.平均起手向听 > 0
+            ? extStats.平均起手向听
+            : defaultAll
+
+        let baseShanten: number
+
+        if (playerSeat === 0) {
+            baseShanten = extStats.平均起手向听亲 && extStats.平均起手向听亲 > 0
+                ? extStats.平均起手向听亲
+                : (allShanten - (mode === '3p' ? 0.30 : 0.35))
+        } else {
+            baseShanten = extStats.平均起手向听子 && extStats.平均起手向听子 > 0
+                ? extStats.平均起手向听子
+                : (allShanten + (mode === '3p' ? 0.15 : 0.12))
+        }
+
+        const luckOffset = (avgLuck - gameLuck) * 0.012
+        const rawShanten = Math.max(1.80, Math.min(5.20, baseShanten + luckOffset))
+
+        return Math.round(rawShanten * 100) / 100
+    }
+
+    protected buildDeterministicGameSpecs(
+        targetCountOrParams: number | BuildGameSpecsParams,
+        modeArg?: GameMode,
+        eastGroupArg?: ModeGroupConfig | null,
+        southGroupArg?: ModeGroupConfig | null
+    ): readonly DeterministicGameSpec[] {
+        /*_ GEMINI THINKING _*/
+        let targetCount: number
+        let mode: GameMode
+        let eastGroup: ModeGroupConfig | null | undefined
+        let southGroup: ModeGroupConfig | null | undefined
+        let fallbackRankRates: readonly number[] | undefined
+        let fallbackAvgScores: readonly number[] | undefined
+
+        if (typeof targetCountOrParams === 'object') {
+            targetCount = targetCountOrParams.targetCount
+            mode = targetCountOrParams.mode
+            eastGroup = targetCountOrParams.eastGroup
+            southGroup = targetCountOrParams.southGroup
+            fallbackRankRates = targetCountOrParams.fallbackRankRates
+            fallbackAvgScores = targetCountOrParams.fallbackAvgScores
+        } else {
+            targetCount = targetCountOrParams
+            mode = modeArg ?? '3p'
+            eastGroup = eastGroupArg
+            southGroup = southGroupArg
+        }
+
+        const maxRank = mode === '3p' ? 3 : 4
+        const defaultRankRates = mode === '3p'
+            ? [0.35, 0.35, 0.30]
+            : [0.25, 0.25, 0.25, 0.25]
+        const defaultScores = mode === '3p'
+            ? [48000, 32000, 15000]
+            : [42000, 30000, 20000, 8000]
+
+        const eastCount = Math.max(0, eastGroup?.count ?? 0)
+        const southCount = Math.max(0, southGroup?.count ?? 0)
+        const totalActualCount = eastCount + southCount
+
+        let allocSouth = 0
+        let allocEast = targetCount
+
+        if (totalActualCount > 0) {
+            if (eastCount === 0 && southCount > 0) {
+                allocSouth = targetCount
+                allocEast = 0
+            } else if (southCount === 0 && eastCount > 0) {
+                allocSouth = 0
+                allocEast = targetCount
+            } else {
+                allocSouth = Math.round(targetCount * (southCount / totalActualCount))
+                if (allocSouth === 0 && southCount > 0 && targetCount >= 10) {
+                    allocSouth = 1
+                }
+                if (allocSouth === targetCount && eastCount > 0 && targetCount >= 10) {
+                    allocSouth = targetCount - 1
+                }
+                allocEast = targetCount - allocSouth
+            }
+        } else if (southGroup && !eastGroup) {
+            allocSouth = targetCount
+            allocEast = 0
+        }
+
+        const isSouthGame: boolean[] = new Array(targetCount).fill(false)
+        if (allocSouth > 0) {
+            if (allocSouth === targetCount) {
+                isSouthGame.fill(true)
+            } else {
+                let i = 0
+                while (i < targetCount) {
+                    const prevStep = Math.floor((i * allocSouth) / targetCount)
+                    const currStep = Math.floor(((i + 1) * allocSouth) / targetCount)
+                    if (currStep > prevStep) {
+                        isSouthGame[i] = true
+                    }
+                    i++
+                }
+            }
+        }
+
+        const eastRates = eastGroup?.rankRates ?? fallbackRankRates ?? defaultRankRates
+        const southRates = southGroup?.rankRates ?? fallbackRankRates ?? defaultRankRates
+
+        const weightedRankRates: number[] = new Array(maxRank).fill(0)
+        let rIndex = 0
+        while (rIndex < maxRank) {
+            const eRate = eastRates[rIndex] ?? (1 / maxRank)
+            const sRate = southRates[rIndex] ?? (1 / maxRank)
+            if (allocEast + allocSouth > 0) {
+                weightedRankRates[rIndex] = (allocEast * eRate + allocSouth * sRate) / targetCount
+            } else {
+                weightedRankRates[rIndex] = eRate
+            }
+            rIndex++
+        }
+
+        const sumWeighted = weightedRankRates.reduce((acc, val) => acc + val, 0)
+        const normalizedRates = sumWeighted > 0
+            ? weightedRankRates.map((w) => w / sumWeighted)
+            : defaultRankRates
+
+        const rankCounts: number[] = new Array(maxRank).fill(0)
+        const specs: DeterministicGameSpec[] = []
+
+        let gameIdx = 0
+        while (gameIdx < targetCount) {
+            const isSouth = isSouthGame[gameIdx] ?? false
+            const activeGroup = isSouth ? southGroup : eastGroup
+            const activeScores = activeGroup?.rankAvgScore ?? fallbackAvgScores ?? defaultScores
+            const activeRoomType = activeGroup?.roomType ?? (isSouth
+                ? (mode === '3p' ? '3인 옥탁 반장전' : '4인 옥탁 반장전')
+                : (mode === '3p' ? '3인 옥탁 동풍전' : '4인 옥탁 동풍전'))
+
+            let bestRank = 1
+            let maxDeficit = -Infinity
+
+            let r = 1
+            while (r <= maxRank) {
+                const targetIdeal = (gameIdx + 1) * (normalizedRates[r - 1] ?? (1 / maxRank))
+                const current = rankCounts[r - 1] ?? 0
+                const deficit = targetIdeal - current
+
+                if (deficit > maxDeficit) {
+                    maxDeficit = deficit
+                    bestRank = r
+                }
+                r++
+            }
+
+            rankCounts[bestRank - 1] = (rankCounts[bestRank - 1] ?? 0) + 1
+
+            const baseScore = activeScores[bestRank - 1] ?? (defaultScores[bestRank - 1] ?? 25000)
+            const deterministicOffset = (((((gameIdx * 13) + (bestRank * 7)) % 9) - 4) * 400)
+            const finalScore = Math.round((baseScore + deterministicOffset) / 100) * 100
+
+            specs.push({
+                gameIndex: gameIdx,
+                rank: bestRank,
+                finalScore,
+                roomType: activeRoomType,
+                isEast: !isSouth,
+                modeId: activeGroup?.modeId
+            })
+            gameIdx++
+        }
+
+        return specs
+    }
 
     public async syncPlayerByNickname(
         nickname: string,
@@ -64,18 +362,19 @@ export class AmaeKoromoService {
         targetGameCount: number = 50
     ): Promise<SyncPlayerResult> {
         /*_ GEMINI THINKING _*/
-        const baseUrl = mode === '3p'
-            ? 'https://5-data.amae-koromo.com/api/v2/pl3'
-            : 'https://5-data.amae-koromo.com/api/v2/pl4'
-
+        const apiPrefix = mode === '3p' ? '/api/v2/pl3' : '/api/v2/pl4'
         const modesParam = mode === '3p' ? '21,22,23,24,25,26' : '8,9,11,12,15,16'
 
-        // 1. Search player
-        const searchRes = await fetch(`${baseUrl}/search_player/${encodeURIComponent(nickname)}`)
-        if (!searchRes.ok) {
+        // 1. Search player with fallback across mirrors
+        let searchList: readonly AmaeSearchResult[]
+        try {
+            searchList = await this.fetchJsonWithFallback<readonly AmaeSearchResult[]>(
+                `${apiPrefix}/search_player/${encodeURIComponent(nickname)}`
+            )
+        } catch {
             throw new NotFoundException(`Failed to search player: ${nickname}`)
         }
-        const searchList = (await searchRes.json()) as readonly AmaeSearchResult[]
+
         const found = searchList[0]
         if (!found) {
             throw new NotFoundException(`Player not found on Amae-Koromo (${mode}): ${nickname}`)
@@ -83,45 +382,122 @@ export class AmaeKoromoService {
 
         const accountId = found.id
 
-        // 2. Determine time window targeting the most recent ~50 games
-        // For 3P: recent ~7-8 days covers ~50 games. For 4P: recent ~365-730 days covers recent 50 games.
+        // 2. Determine time window targeting the most recent games
         const now = Date.now()
-        let startTime = mode === '3p' ? (now - 8 * 86400 * 1000) : (now - 730 * 86400 * 1000)
-        let endTime = now + 86400000
+        const latestTimestampMs = (found.latest_timestamp ?? 0) * 1000
+        let endTime = Math.max(now, latestTimestampMs) + 86400000
+        let startTime = (found.latest_timestamp ? latestTimestampMs : now) - (mode === '3p' ? 30 * 86400 * 1000 : 730 * 86400 * 1000)
 
         // Fetch recent window rank stats
-        let rankRes = await fetch(`${baseUrl}/player_stats/${accountId}/${startTime}/${endTime}?mode=${modesParam}`)
-        let rankStats = (await rankRes.json()) as AmaeRankStats
+        let rankStats = await this.fetchJsonWithFallback<AmaeRankStats>(
+            `${apiPrefix}/player_stats/${accountId}/${startTime}/${endTime}?mode=${modesParam}`
+        )
 
-        // If window has too few games (e.g. inactive week), expand gracefully
+        // If window has too few games (e.g. inactive month), expand gracefully
         if (!rankStats.count || rankStats.count < 10) {
             startTime = 1262304000000
-            rankRes = await fetch(`${baseUrl}/player_stats/${accountId}/${startTime}/${endTime}?mode=${modesParam}`)
-            rankStats = (await rankRes.json()) as AmaeRankStats
+            rankStats = await this.fetchJsonWithFallback<AmaeRankStats>(
+                `${apiPrefix}/player_stats/${accountId}/${startTime}/${endTime}?mode=${modesParam}`
+            )
         }
 
-        // Fetch matching extended stats for the exact same recent timeframe
-        const extRes = await fetch(`${baseUrl}/player_extended_stats/${accountId}/${startTime}/${endTime}?mode=${modesParam}`)
-        const extStats = (await extRes.json()) as AmaeExtendedStats
+        // Fetch matching extended stats for the exact same timeframe
+        const extStats = await this.fetchJsonWithFallback<AmaeExtendedStats>(
+            `${apiPrefix}/player_extended_stats/${accountId}/${startTime}/${endTime}?mode=${modesParam}`
+        )
 
-        // 3. Compute Luck & Skill scores for the recent ~50 game window
+        // 3. Separate East-wind and South-wind queries when played_modes indicates player played them
+        const eastCandidateModes = mode === '3p' ? [21, 23, 25] : [8, 11, 15]
+        const southCandidateModes = mode === '3p' ? [22, 24, 26] : [9, 12, 16]
+
+        const allPlayedModes = extStats.played_modes ?? rankStats.played_modes ?? []
+        const playedEastModes = allPlayedModes.filter((m) => eastCandidateModes.includes(m))
+        const playedSouthModes = allPlayedModes.filter((m) => southCandidateModes.includes(m))
+
+        let eastStats: AmaeRankStats | null = null
+        if (playedEastModes.length > 0) {
+            try {
+                const eastParam = playedEastModes.join(',')
+                const res = await this.fetchJsonWithFallback<AmaeRankStats>(
+                    `${apiPrefix}/player_stats/${accountId}/${startTime}/${endTime}?mode=${eastParam}`
+                )
+                if (res && res.count && res.count > 0) {
+                    eastStats = res
+                }
+            } catch {
+                eastStats = null
+            }
+        }
+
+        let southStats: AmaeRankStats | null = null
+        if (playedSouthModes.length > 0) {
+            try {
+                const southParam = playedSouthModes.join(',')
+                const res = await this.fetchJsonWithFallback<AmaeRankStats>(
+                    `${apiPrefix}/player_stats/${accountId}/${startTime}/${endTime}?mode=${southParam}`
+                )
+                if (res && res.count && res.count > 0) {
+                    southStats = res
+                }
+            } catch {
+                southStats = null
+            }
+        }
+
+        const eastCount = eastStats?.count ?? (southStats ? 0 : (rankStats.count ?? 0))
+        const southCount = southStats?.count ?? (eastStats ? 0 : 0)
+
+        const primaryEastModeId = this.resolvePrimaryModeId(
+            allPlayedModes,
+            mode,
+            true,
+            found.level.id
+        )
+        const eastRoomType = this.resolveRoomType(primaryEastModeId)
+
+        const primarySouthModeId = this.resolvePrimaryModeId(
+            allPlayedModes,
+            mode,
+            false,
+            found.level.id
+        )
+        const southRoomType = this.resolveRoomType(primarySouthModeId)
+
+        const eastGroup: ModeGroupConfig | null = (eastCount > 0 || (southCount === 0 && !southStats))
+            ? {
+                count: eastCount,
+                rankRates: eastStats?.rank_rates ?? rankStats.rank_rates,
+                rankAvgScore: eastStats?.rank_avg_score ?? rankStats.rank_avg_score,
+                roomType: eastRoomType,
+                modeId: primaryEastModeId
+            }
+            : null
+
+        const southGroup: ModeGroupConfig | null = southCount > 0
+            ? {
+                count: southCount,
+                rankRates: southStats?.rank_rates ?? rankStats.rank_rates,
+                rankAvgScore: southStats?.rank_avg_score ?? rankStats.rank_avg_score,
+                roomType: southRoomType,
+                modeId: primarySouthModeId
+            }
+            : null
+
+        // 4. Compute Luck & Skill scores
         let luckScore: number
         let skillScore: number
 
         if (mode === '3p') {
-            // 3-Player Mahjong baselines: Starting shanten ~ 3.25, Uradora ~ 42%, Ippatsu ~ 20%
             const shantenLuck = (3.25 - (extStats.平均起手向听 || 3.25)) * 18
             const uradoraLuck = ((extStats.里宝率 || 0.42) - 0.42) * 35
             const ippatsuLuck = ((extStats.一发率 || 0.20) - 0.20) * 30
             luckScore = Math.max(0, Math.min(100, Math.round(50 + shantenLuck + uradoraLuck + ippatsuLuck)))
 
-            // 3-Player Skill baselines: Deal-in ~ 15.5%, Win rate ~ 29%, Initiative ~ 80%
             const dealInSkill = (0.155 - (extStats.放铳率 || 0.155)) * 220
             const winSkill = ((extStats.和牌率 || 0.29) - 0.29) * 110
             const initiativeSkill = ((extStats.先制率 || 0.80) - 0.80) * 40
             skillScore = Math.max(0, Math.min(100, Math.round(50 + dealInSkill + winSkill + initiativeSkill)))
         } else {
-            // 4-Player Mahjong baselines: Starting shanten ~ 3.50, Uradora ~ 28%
             const shantenLuck = (3.50 - (extStats.平均起手向听 || 3.50)) * 15
             const uradoraLuck = ((extStats.里宝率 || 0.28) - 0.28) * 40
             const ippatsuLuck = ((extStats.一发率 || 0.20) - 0.20) * 30
@@ -135,40 +511,21 @@ export class AmaeKoromoService {
 
         const negativeRate = rankStats.negative_rate ? Number((rankStats.negative_rate * 100).toFixed(1)) : 0
 
-        // 4. Persist exactly recent 50 games into PostgreSQL
-        const gameCount = Math.min(targetGameCount, rankStats.count || targetGameCount)
-        const rankRates = rankStats.rank_rates
-        const avgScores = rankStats.rank_avg_score
+        // 5. Deterministic Game Specs Reconstruction (No Math.random())
+        const totalAvailable = (eastCount + southCount) > 0 ? (eastCount + southCount) : (rankStats.count || targetGameCount)
+        const gameCount = Math.min(targetGameCount, totalAvailable)
+
+        const gameSpecs = this.buildDeterministicGameSpecs({
+            targetCount: gameCount,
+            mode,
+            eastGroup,
+            southGroup,
+            fallbackRankRates: rankStats.rank_rates,
+            fallbackAvgScores: rankStats.rank_avg_score
+        })
+
         const maxRank = mode === '3p' ? 3 : 4
-
-        // Generate distributed rank sequence matching recent rates
-        const distributedRanks: number[] = []
-        if (mode === '3p') {
-            const count1 = Math.round(gameCount * (rankRates[0] ?? 0.25))
-            const count2 = Math.round(gameCount * (rankRates[1] ?? 0.38))
-            const count3 = Math.max(0, gameCount - count1 - count2)
-            for (let j = 0; j < count1; j++) { distributedRanks.push(1) }
-            for (let j = 0; j < count2; j++) { distributedRanks.push(2) }
-            for (let j = 0; j < count3; j++) { distributedRanks.push(3) }
-        } else {
-            const count1 = Math.round(gameCount * (rankRates[0] ?? 0.25))
-            const count2 = Math.round(gameCount * (rankRates[1] ?? 0.30))
-            const count3 = Math.round(gameCount * (rankRates[2] ?? 0.23))
-            const count4 = Math.max(0, gameCount - count1 - count2 - count3)
-            for (let j = 0; j < count1; j++) { distributedRanks.push(1) }
-            for (let j = 0; j < count2; j++) { distributedRanks.push(2) }
-            for (let j = 0; j < count3; j++) { distributedRanks.push(3) }
-            for (let j = 0; j < count4; j++) { distributedRanks.push(4) }
-        }
-
-        // Uniform shuffle
-        for (let j = distributedRanks.length - 1; j > 0; j--) {
-            const k = Math.floor(Math.random() * (j + 1))
-            const currentJ = distributedRanks[j] ?? 2
-            const currentK = distributedRanks[k] ?? 2
-            distributedRanks[j] = currentK
-            distributedRanks[k] = currentJ
-        }
+        const baseTimestamp = found.latest_timestamp ? found.latest_timestamp * 1000 : now
 
         await this.prisma.$transaction(async (tx) => {
             const player = await tx.player.upsert({
@@ -184,9 +541,6 @@ export class AmaeKoromoService {
                 }
             })
 
-            const baseTimestamp = found.latest_timestamp ? found.latest_timestamp * 1000 : now
-
-            /*_ GEMINI THINKING _*/
             const gamesData: {
                 readonly id: string
                 readonly roomType: string
@@ -228,12 +582,18 @@ export class AmaeKoromoService {
                 readonly isWin: boolean
             }[] = []
 
-            for (let i = 0; i < gameCount; i++) {
-                const gameId = `amae-sync-${mode}-${accountId}-${i + 1}`
-                const rank = distributedRanks[i] ?? 2
-                const finalScore = avgScores[rank - 1] ?? (mode === '3p' ? 30000 : 25000)
+            let specIdx = 0
+            while (specIdx < gameSpecs.length) {
+                const spec = gameSpecs[specIdx]
+                if (!spec) {
+                    specIdx++
+                    continue
+                }
+                const gameId = `amae-sync-${mode}-${accountId}-${specIdx + 1}`
+                const rank = spec.rank
+                const finalScore = spec.finalScore
+                const roomType = spec.roomType
 
-                // Realistic correlation between rank, luck, and skill
                 let rankBiasLuck = 0
                 let rankBiasSkill = 0
                 let isBadLuck = false
@@ -246,8 +606,7 @@ export class AmaeKoromoService {
                         rankBiasLuck = -2
                         rankBiasSkill = 2
                     } else {
-                        // 3rd place (last): either unlucky damage or misplay
-                        isBadLuck = (i % 2 === 0)
+                        isBadLuck = (specIdx % 2 === 0)
                         rankBiasLuck = isBadLuck ? -22 : -10
                         rankBiasSkill = isBadLuck ? 2 : -20
                     }
@@ -262,31 +621,27 @@ export class AmaeKoromoService {
                         rankBiasLuck = -6
                         rankBiasSkill = -4
                     } else {
-                        // 4th place (last): either severe bad luck or deal-in mistakes
-                        isBadLuck = (i % 2 === 0)
+                        isBadLuck = (specIdx % 2 === 0)
                         rankBiasLuck = isBadLuck ? -24 : -12
                         rankBiasSkill = isBadLuck ? 0 : -22
                     }
                 }
 
-                // Variance in luck/skill per game around the recent average
-                const varianceLuck = ((i * 7 + 3) % 7) - 3
-                const varianceSkill = ((i * 5 + 2) % 7) - 3
+                const varianceLuck = (((specIdx * 7) + 3) % 7) - 3
+                const varianceSkill = (((specIdx * 5) + 2) % 7) - 3
                 const gameLuck = Math.max(10, Math.min(95, luckScore + rankBiasLuck + varianceLuck * 2))
                 const gameSkill = Math.max(10, Math.min(95, skillScore + rankBiasSkill + varianceSkill * 2))
 
-                // Realistic start timestamp stepped back from latest match
-                const matchTime = new Date(baseTimestamp - (gameCount - 1 - i) * 3600000 * 2.5)
-
-                const playerSeat = i % maxRank
+                const matchTime = new Date(baseTimestamp - (gameSpecs.length - 1 - specIdx) * 3600000 * 2.5)
+                const playerSeat = specIdx % maxRank
                 const isDealIn = (rank === maxRank && !isBadLuck)
-                const isWin = (rank === 1 || (rank === 2 && i % 2 === 0))
-                const estimatedShanten = mode === '3p' ? 3 : 4
+                const isWin = (rank === 1 || (rank === 2 && specIdx % 2 === 0))
+                const startShanten = this.calculateStartShanten(playerSeat, extStats, gameLuck, luckScore, mode)
                 const roundId = `${gameId}-r0`
 
                 gamesData.push({
                     id: gameId,
-                    roomType: mode === '3p' ? '3인 마작 반장/동풍전' : '4인 마작 반장/동풍전',
+                    roomType,
                     gameDate: matchTime
                 })
 
@@ -313,7 +668,7 @@ export class AmaeKoromoService {
                     id: `${roundId}-m${playerSeat}`,
                     roundId,
                     seat: playerSeat,
-                    startShanten: estimatedShanten,
+                    startShanten,
                     startDoraCount: gameLuck >= 60 ? 2 : 1,
                     drawLuckRatio: gameLuck >= 50 ? 0.35 : 0.20,
                     uradoraHits: gameLuck >= 70 ? 1 : 0,
@@ -324,9 +679,9 @@ export class AmaeKoromoService {
                     skillScore: gameSkill,
                     isWin
                 })
+                specIdx++
             }
 
-            // Clean previous sync games for this mode
             await tx.game.deleteMany({
                 where: {
                     id: { startsWith: `amae-sync-${mode}-${accountId}-` }
@@ -346,7 +701,7 @@ export class AmaeKoromoService {
             accountId,
             nickname: found.nickname,
             gameMode: mode,
-            totalGames: gameCount,
+            totalGames: gameSpecs.length,
             avgRank: Number(rankStats.avg_rank.toFixed(2)),
             winRate: Number((extStats.和牌率 * 100).toFixed(1)),
             dealInRate: Number((extStats.放铳率 * 100).toFixed(1)),
