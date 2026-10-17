@@ -184,14 +184,49 @@ export class AmaeKoromoService {
                 }
             })
 
-            // Clean previous sync games for this mode
-            await tx.game.deleteMany({
-                where: {
-                    id: { startsWith: `amae-sync-${mode}-${accountId}-` }
-                }
-            })
-
             const baseTimestamp = found.latest_timestamp ? found.latest_timestamp * 1000 : now
+
+            /*_ GEMINI THINKING _*/
+            const gamesData: {
+                readonly id: string
+                readonly roomType: string
+                readonly gameDate: Date
+            }[] = []
+
+            const participantsData: {
+                readonly id: string
+                readonly gameId: string
+                readonly playerId: string
+                readonly seat: number
+                readonly finalScore: number
+                readonly finalRank: number
+                readonly luckScore: number
+                readonly skillScore: number
+            }[] = []
+
+            const roundsData: {
+                readonly id: string
+                readonly gameId: string
+                readonly roundIndex: number
+                readonly honba: number
+                readonly riichiSticks: number
+            }[] = []
+
+            const roundMetricsData: {
+                readonly id: string
+                readonly roundId: string
+                readonly seat: number
+                readonly startShanten: number
+                readonly startDoraCount: number
+                readonly drawLuckRatio: number
+                readonly uradoraHits: number
+                readonly dealInScore: number
+                readonly tsumoLossScore: number
+                readonly tileEfficiency: number
+                readonly luckScore: number
+                readonly skillScore: number
+                readonly isWin: boolean
+            }[] = []
 
             for (let i = 0; i < gameCount; i++) {
                 const gameId = `amae-sync-${mode}-${accountId}-${i + 1}`
@@ -247,44 +282,62 @@ export class AmaeKoromoService {
                 const isDealIn = (rank === maxRank && !isBadLuck)
                 const isWin = (rank === 1 || (rank === 2 && i % 2 === 0))
                 const estimatedShanten = mode === '3p' ? 3 : 4
+                const roundId = `${gameId}-r0`
 
-                await tx.game.create({
-                    data: {
-                        id: gameId,
-                        roomType: mode === '3p' ? '3인 마작 반장/동풍전' : '4인 마작 반장/동풍전',
-                        gameDate: matchTime,
-                        rounds: {
-                            create: {
-                                roundIndex: 0,
-                                roundMetrics: {
-                                    create: {
-                                        seat: playerSeat,
-                                        startShanten: estimatedShanten,
-                                        startDoraCount: gameLuck >= 60 ? 2 : 1,
-                                        drawLuckRatio: gameLuck >= 50 ? 0.35 : 0.20,
-                                        uradoraHits: gameLuck >= 70 ? 1 : 0,
-                                        dealInScore: isDealIn ? 8000 : 0,
-                                        tsumoLossScore: (rank === maxRank && isBadLuck) ? 6000 : 0,
-                                        tileEfficiency: gameSkill >= 50 ? 0.88 : 0.72,
-                                        luckScore: gameLuck,
-                                        skillScore: gameSkill,
-                                        isWin
-                                    }
-                                }
-                            }
-                        },
-                        participants: {
-                            create: {
-                                playerId: player.id,
-                                seat: playerSeat,
-                                finalScore,
-                                finalRank: rank,
-                                luckScore: gameLuck,
-                                skillScore: gameSkill
-                            }
-                        }
-                    }
+                gamesData.push({
+                    id: gameId,
+                    roomType: mode === '3p' ? '3인 마작 반장/동풍전' : '4인 마작 반장/동풍전',
+                    gameDate: matchTime
                 })
+
+                participantsData.push({
+                    id: `${gameId}-p${playerSeat}`,
+                    gameId,
+                    playerId: player.id,
+                    seat: playerSeat,
+                    finalScore,
+                    finalRank: rank,
+                    luckScore: gameLuck,
+                    skillScore: gameSkill
+                })
+
+                roundsData.push({
+                    id: roundId,
+                    gameId,
+                    roundIndex: 0,
+                    honba: 0,
+                    riichiSticks: 0
+                })
+
+                roundMetricsData.push({
+                    id: `${roundId}-m${playerSeat}`,
+                    roundId,
+                    seat: playerSeat,
+                    startShanten: estimatedShanten,
+                    startDoraCount: gameLuck >= 60 ? 2 : 1,
+                    drawLuckRatio: gameLuck >= 50 ? 0.35 : 0.20,
+                    uradoraHits: gameLuck >= 70 ? 1 : 0,
+                    dealInScore: isDealIn ? 8000 : 0,
+                    tsumoLossScore: (rank === maxRank && isBadLuck) ? 6000 : 0,
+                    tileEfficiency: gameSkill >= 50 ? 0.88 : 0.72,
+                    luckScore: gameLuck,
+                    skillScore: gameSkill,
+                    isWin
+                })
+            }
+
+            // Clean previous sync games for this mode
+            await tx.game.deleteMany({
+                where: {
+                    id: { startsWith: `amae-sync-${mode}-${accountId}-` }
+                }
+            })
+
+            if (gamesData.length > 0) {
+                await tx.game.createMany({ data: gamesData, skipDuplicates: true })
+                await tx.gameParticipant.createMany({ data: participantsData, skipDuplicates: true })
+                await tx.round.createMany({ data: roundsData, skipDuplicates: true })
+                await tx.roundMetric.createMany({ data: roundMetricsData, skipDuplicates: true })
             }
         })
 
