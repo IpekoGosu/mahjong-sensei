@@ -290,6 +290,23 @@ export default function DashboardPage(): React.ReactElement {
         }
     }
 
+    const getAiGradeBadgeClass = (grade: string): string => {
+        switch (grade) {
+            case 'S+':
+                return 'bg-amber-400/20 text-amber-300 border-amber-400/50'
+            case 'S':
+                return 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+            case 'A':
+                return 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+            case 'B':
+                return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+            case 'C':
+                return 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40'
+            default:
+                return 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+        }
+    }
+
     return (
         <main className="max-w-7xl mx-auto px-4 py-8 space-y-8">
             {/* Top Navigation */}
@@ -623,8 +640,16 @@ export default function DashboardPage(): React.ReactElement {
                                         <div className="font-semibold text-white flex items-center gap-2">
                                             <span>{game.finalScore.toLocaleString()}점</span>
                                             {getQuadrantBadge(game.quadrant, game.rank)}
+                                            {game.aiEvaluation && (
+                                                <span className={`px-2 py-0.5 rounded text-xs font-bold border ${getAiGradeBadgeClass(game.aiEvaluation.grade)}`}>
+                                                    AI {game.aiEvaluation.grade} ({game.aiEvaluation.aiScore}점)
+                                                </span>
+                                            )}
                                         </div>
                                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 font-mono mt-0.5">
+                                            {game.roomType && (
+                                                <span className="text-amber-400/90 font-sans font-medium">{game.roomType}</span>
+                                            )}
                                             <span>ID: {game.gameId}</span>
                                             {game.timestamp && (
                                                 <span className="flex items-center gap-1 text-slate-400 font-sans">
@@ -633,10 +658,21 @@ export default function DashboardPage(): React.ReactElement {
                                                 </span>
                                             )}
                                         </div>
+                                        {game.aiEvaluation?.summaryComment && (
+                                            <p className="text-xs text-slate-400 mt-1 italic font-sans max-w-xl">
+                                                "{game.aiEvaluation.summaryComment}"
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
 
                                 <div className="flex items-center gap-6 text-sm">
+                                    {game.aiEvaluation && (
+                                        <div>
+                                            <span className="text-slate-500 text-xs block">AI 일치율</span>
+                                            <span className="font-semibold text-emerald-400">{game.aiEvaluation.matchRate}%</span>
+                                        </div>
+                                    )}
                                     <div>
                                         <span className="text-slate-500 text-xs block">운 점수</span>
                                         <span className="font-semibold text-purple-400">{game.luckScore}</span>

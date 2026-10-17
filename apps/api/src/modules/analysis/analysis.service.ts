@@ -7,11 +7,12 @@ import {
     GameMetricSummary,
     PerformanceQuadrant
 } from '@mahjong-sensei/types'
-import { MetricCalculator } from '@mahjong-sensei/mahjong-core'
+import { MetricCalculator, AiRankEvaluator } from '@mahjong-sensei/mahjong-core'
 
 @Injectable()
 export class AnalysisService {
     private readonly metricCalc: MetricCalculator = new MetricCalculator()
+    private readonly aiRankEvaluator: AiRankEvaluator = new AiRankEvaluator()
 
     public constructor(private readonly prisma: PrismaService) {}
 
@@ -112,6 +113,20 @@ export class AnalysisService {
 
             const avgShanten = myRoundsCount > 0 ? Number((totalShanten / myRoundsCount).toFixed(1)) : 3.5
 
+            /*_ GEMINI THINKING _*/
+            const aiEvaluation = this.aiRankEvaluator.evaluateSummaryGame({
+                rank: p.finalRank,
+                finalScore: p.finalScore,
+                roomType: p.game.roomType,
+                gameMode: mode,
+                luckScore: p.luckScore,
+                skillScore: p.skillScore,
+                averageStartingShanten: avgShanten,
+                winCount,
+                dealInCount,
+                totalRounds: p.game.rounds.length || 8
+            })
+
             games.push({
                 gameId: p.gameId,
                 timestamp: p.game.gameDate.getTime(),
@@ -122,7 +137,9 @@ export class AnalysisService {
                 quadrant,
                 averageStartingShanten: avgShanten,
                 dealInCount,
-                winCount
+                winCount,
+                roomType: p.game.roomType,
+                aiEvaluation
             })
 
             luckTrend.push(p.luckScore)

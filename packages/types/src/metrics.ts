@@ -31,6 +31,18 @@ export interface RoundSkillMetric {
     readonly skillScore: number
 }
 
+export type AiGrade = 'S+' | 'S' | 'A' | 'B' | 'C' | 'D'
+
+export interface AiEvaluationBreakdown {
+    readonly grade: AiGrade
+    readonly aiScore: number
+    readonly matchRate: number
+    readonly attackGrade: AiGrade
+    readonly defenseGrade: AiGrade
+    readonly situationGrade: AiGrade
+    readonly summaryComment: string
+}
+
 export interface GameMetricSummary {
     readonly gameId: string
     readonly timestamp: number
@@ -42,6 +54,8 @@ export interface GameMetricSummary {
     readonly averageStartingShanten: number
     readonly dealInCount: number
     readonly winCount: number
+    readonly roomType?: string
+    readonly aiEvaluation?: AiEvaluationBreakdown
 }
 
 export interface RollingWindowStats {
