@@ -58,3 +58,43 @@ export interface RollingWindowStats {
     readonly rankTrend: readonly number[]
     readonly games: readonly GameMetricSummary[]
 }
+
+export type TierKey = 'NOVICE_ADEPT' | 'EXPERT' | 'MASTER' | 'SAINT'
+
+export interface TierBenchmarkDistribution {
+    readonly tier: TierKey
+    readonly tierLabel: string
+    readonly mode: GameMode
+    readonly avgLuckScore: number
+    readonly luckStdDev: number
+    readonly avgSkillScore: number
+    readonly skillStdDev: number
+    readonly avgDealInRate: number
+    readonly avgWinRate: number
+    readonly startingShantenBaseline: number
+}
+
+export interface TierComparisonResult {
+    readonly mode: GameMode
+    readonly tier: TierKey
+    readonly tierLabel: string
+    readonly benchmark: TierBenchmarkDistribution
+    readonly playerLuck: number
+    readonly playerSkill: number
+    readonly luckDelta: number
+    readonly skillDelta: number
+    readonly luckPercentile: number
+    readonly skillPercentile: number
+    readonly allTiers: readonly TierBenchmarkDistribution[]
+}
+
+export interface GenerateShareCardParams {
+    readonly nickname: string
+    readonly mode: GameMode
+    readonly tierLabel: string
+    readonly luckScore: number
+    readonly skillScore: number
+    readonly winRate: number
+    readonly dealInRate: number
+    readonly quadrant?: string | undefined
+}
