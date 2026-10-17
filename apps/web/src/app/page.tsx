@@ -107,14 +107,14 @@ export default function DashboardPage(): React.ReactElement {
     }
 
     useEffect(() => {
-        handleSync(gameMode, '서울불빛')
+        handleSync(gameMode, nickname)
     }, [gameMode])
 
     useEffect(() => {
-        if (accountId) {
+        if (accountId && !syncing) {
             fetchStats(accountId, windowSize, gameMode)
         }
-    }, [windowSize, accountId, gameMode])
+    }, [windowSize])
 
     const handleImport = async (e: React.FormEvent): Promise<void> => {
         e.preventDefault()
