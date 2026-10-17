@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert'
+import { PlayerSummary } from '@mahjong-sensei/types'
 import { PaipuParser } from './paipu-parser'
 import { SAMPLE_MAJSOUL_GAME } from '../sample-data/sample-paipu'
 
@@ -13,7 +14,7 @@ test('PaipuParser - Parse sample game and compute round metrics', () => {
     assert.strictEqual(result.detail.rounds.length, 2)
 
     // Check player 0 (SenseiPlayer) performance
-    const player0 = result.detail.players.find((p) => p.accountId === 10001)
+    const player0 = result.detail.players.find((p: PlayerSummary) => p.accountId === 10001)
     assert.ok(player0 !== undefined)
     assert.strictEqual(player0.seat, 0)
     assert.strictEqual(player0.rank, 1) // Finished 1st
