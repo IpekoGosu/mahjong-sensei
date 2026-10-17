@@ -87,20 +87,14 @@ export class LiqiBinaryDecoder {
             }
         }
 
-        // If field 5 records were empty, check if input was GameDetailRecords (records in field 1)
-        if (wrapperDataList.length === 0) {
-            for (const field of fields) {
-                if (field.fieldNumber === 1 && field.data !== undefined) {
-                    wrapperDataList.push(field.data)
-                }
-            }
-            if (wrapperDataList.length > 0) {
-                uuid = 'game-detail-record'
-            }
-        }
+        // Check if input is a single Wrapper message directly (field 1 is action name string, field 2 is payload)
+        const isSingleWrapper =
+            wrapperDataList.length === 0 &&
+            players.length === 0 &&
+            timestamp === 0 &&
+            (uuid.startsWith('.lq.') || uuid.startsWith('lq.') || uuid.startsWith('Record') || uuid.startsWith('Action'))
 
-        // If still empty, check if input is a single Wrapper message directly
-        if (wrapperDataList.length === 0) {
+        if (isSingleWrapper) {
             const singleWrapper = this.decodeWrapper(buffer)
             if (singleWrapper.name.length > 0) {
                 const singleAction = this.decodeAction(singleWrapper.name, singleWrapper.data, isObfuscated)
@@ -112,6 +106,18 @@ export class LiqiBinaryDecoder {
                     players: this.generateDefaultPlayers(4),
                     rounds
                 }
+            }
+        }
+
+        // If field 5 records were empty, check if input was GameDetailRecords (records in field 1)
+        if (wrapperDataList.length === 0) {
+            for (const field of fields) {
+                if (field.fieldNumber === 1 && field.data !== undefined) {
+                    wrapperDataList.push(field.data)
+                }
+            }
+            if (wrapperDataList.length > 0) {
+                uuid = 'game-detail-record'
             }
         }
 
@@ -237,13 +243,8 @@ export class LiqiBinaryDecoder {
         if (isObfuscated === true) {
             payload = this.deobfuscate(data)
         } else if (isObfuscated === undefined) {
-            if (data.length > 0) {
-                const firstByte = data[0] ?? 0
-                const expected08 = 0x08 ^ (this.xorKey[0] ?? 0)
-                const expected0A = 0x0a ^ (this.xorKey[0] ?? 0)
-                if (firstByte === expected08 || firstByte === expected0A) {
-                    payload = this.deobfuscate(data)
-                }
+            if (this.isObfuscatedPayload(data)) {
+                payload = this.deobfuscate(data)
             }
         }
 
@@ -340,6 +341,41 @@ export class LiqiBinaryDecoder {
     /*_ GEMINI THINKING _*/
     protected obfuscate(data: Uint8Array): Uint8Array {
         return this.xorTransform(data)
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected isObfuscatedPayload(data: Uint8Array): boolean {
+        if (data.length === 0) {
+            return false
+        }
+        const firstByte = data[0] ?? 0
+        const keyByte = this.xorKey[0] ?? 0
+        const deobfFirst = firstByte ^ keyByte
+
+        const deobfWire = deobfFirst & 0x07
+        const deobfField = deobfFirst >>> 3
+
+        const plainWire = firstByte & 0x07
+        const plainField = firstByte >>> 3
+
+        const isDeobfValidTag = (deobfWire === 0 || deobfWire === 2) && deobfField >= 1 && deobfField <= 15
+        const isPlainValidTag = (plainWire === 0 || plainWire === 2) && plainField >= 1 && plainField <= 15
+
+        if (isDeobfValidTag && !isPlainValidTag) {
+            return true
+        }
+        if (!isDeobfValidTag && isPlainValidTag) {
+            return false
+        }
+        if (isDeobfValidTag && isPlainValidTag) {
+            const plainFields = this.parseProtoFields(data)
+            const deobfFields = this.parseProtoFields(this.deobfuscate(data))
+            return deobfFields.length > plainFields.length
+        }
+
+        const plainFields = this.parseProtoFields(data)
+        const deobfFields = this.parseProtoFields(this.deobfuscate(data))
+        return deobfFields.length > plainFields.length
     }
 
     /*_ GEMINI THINKING _*/
@@ -523,7 +559,13 @@ export class LiqiBinaryDecoder {
             }
 
             if (wireType === 0) {
+                if (offset >= buffer.length) {
+                    break
+                }
                 const varResult = this.readVarint64(buffer, offset)
+                if (varResult.bytesRead === 0) {
+                    break
+                }
                 offset += varResult.bytesRead
                 fields.push({
                     fieldNumber,
@@ -531,9 +573,18 @@ export class LiqiBinaryDecoder {
                     varintValue: varResult.value
                 })
             } else if (wireType === 2) {
+                if (offset >= buffer.length) {
+                    break
+                }
                 const lenResult = this.readVarint(buffer, offset)
+                if (lenResult.bytesRead === 0) {
+                    break
+                }
                 offset += lenResult.bytesRead
                 const length = lenResult.value
+                if (length < 0 || offset + length > buffer.length) {
+                    break
+                }
                 const data = buffer.subarray(offset, offset + length)
                 offset += length
                 fields.push({
@@ -542,6 +593,9 @@ export class LiqiBinaryDecoder {
                     data
                 })
             } else if (wireType === 1) {
+                if (offset + 8 > buffer.length) {
+                    break
+                }
                 const data = buffer.subarray(offset, offset + 8)
                 offset += 8
                 fields.push({
@@ -550,6 +604,9 @@ export class LiqiBinaryDecoder {
                     data
                 })
             } else if (wireType === 5) {
+                if (offset + 4 > buffer.length) {
+                    break
+                }
                 const data = buffer.subarray(offset, offset + 4)
                 offset += 4
                 fields.push({
@@ -658,11 +715,13 @@ export class LiqiBinaryDecoder {
             }
         }
 
+        const isSanmaRound = scores.length === 3 || ((hands[3]?.length ?? 0) === 0 && (hands[0]?.length ?? 0) > 0)
+        const defaultInitialScore = isSanmaRound ? 35000 : 25000
         const defaultScores: readonly [number, number, number, number] = [
-            scores[0] ?? 25000,
-            scores[1] ?? 25000,
-            scores[2] ?? 25000,
-            scores[3] ?? 25000
+            scores[0] ?? defaultInitialScore,
+            scores[1] ?? defaultInitialScore,
+            scores[2] ?? defaultInitialScore,
+            scores[3] ?? (isSanmaRound ? 0 : 25000)
         ]
 
         return {
@@ -1190,6 +1249,21 @@ export class LiqiBinaryDecoder {
         if (currentHeader !== null) {
             rounds.push({
                 header: currentHeader,
+                actions: currentActions
+            })
+        } else if (currentActions.length > 0) {
+            const fallbackHeader: MajsoulRecordNewRound = {
+                type: 'RecordNewRound',
+                chang: 0,
+                ju: 0,
+                ben: 0,
+                liqi: 0,
+                scores: [25000, 25000, 25000, 25000],
+                dora: '1m',
+                hands: [[], [], [], []]
+            }
+            rounds.push({
+                header: fallbackHeader,
                 actions: currentActions
             })
         }

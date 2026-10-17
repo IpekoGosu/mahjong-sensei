@@ -22,6 +22,7 @@ import {
 } from './types'
 import { PaipuParser } from './paipu-parser'
 import { SAMPLE_MAJSOUL_GAME } from '../sample-data/sample-paipu'
+import { LiqiBinaryDecoder as CoreLiqiBinaryDecoder } from '../index'
 
 /*_ GEMINI THINKING _*/
 class MockLiqiBinaryDecoder extends LiqiBinaryDecoder {
@@ -83,6 +84,18 @@ class MockLiqiBinaryDecoder extends LiqiBinaryDecoder {
 
     public testWriteLengthDelimited(fieldNumber: number, data: Uint8Array): Uint8Array {
         return this.writeLengthDelimited(fieldNumber, data)
+    }
+
+    public testWriteVarintField(fieldNumber: number, value: number | bigint): Uint8Array {
+        return this.writeVarintField(fieldNumber, value)
+    }
+
+    public testWriteStringField(fieldNumber: number, str: string): Uint8Array {
+        return this.writeStringField(fieldNumber, str)
+    }
+
+    public testIsObfuscatedPayload(data: Uint8Array): boolean {
+        return this.isObfuscatedPayload(data)
     }
 
     public testParseProtoFields(buffer: Uint8Array): readonly ProtoRawField[] {
@@ -600,4 +613,187 @@ test('LiqiBinaryDecoder - Single round encode and decode', () => {
     const encoded = decoder.encodeRound(singleRound)
     const decoded = decoder.decodeRound(encoded)
     assert.deepStrictEqual(decoded, singleRound)
+})
+
+test('LiqiBinaryDecoder - Single LiqiWrapper decoding vs GameDetailRecords fallback', () => {
+    const decoder = new LiqiBinaryDecoder()
+
+    // 1. Single LiqiWrapper with RecordNewRound
+    const sampleNewRound = SAMPLE_MAJSOUL_GAME.rounds[0]?.header
+    assert.ok(sampleNewRound !== undefined)
+
+    const newRoundWrapper = decoder.encodeAction(sampleNewRound)
+    const newRoundWrapperBytes = decoder.encodeWrapper(newRoundWrapper.name, newRoundWrapper.data)
+    const decodedNewRoundGame = decoder.decodeGameRecord(newRoundWrapperBytes)
+
+    assert.strictEqual(decodedNewRoundGame.uuid, 'single-wrapper-game')
+    assert.strictEqual(decodedNewRoundGame.rounds.length, 1)
+    assert.strictEqual(decodedNewRoundGame.rounds[0]?.header.type, 'RecordNewRound')
+    assert.strictEqual(decodedNewRoundGame.rounds[0]?.header.dora, sampleNewRound.dora)
+
+    // 2. Single LiqiWrapper with an action (e.g. RecordDealTile)
+    const dealTileAction: MajsoulRecordDealTile = {
+        type: 'RecordDealTile',
+        seat: 2,
+        tile: '6s',
+        doras: ['1m']
+    }
+    const dealWrapper = decoder.encodeAction(dealTileAction)
+    const dealWrapperBytes = decoder.encodeWrapper(dealWrapper.name, dealWrapper.data)
+    const decodedDealGame = decoder.decodeGameRecord(dealWrapperBytes)
+
+    assert.strictEqual(decodedDealGame.uuid, 'single-wrapper-game')
+    assert.strictEqual(decodedDealGame.rounds.length, 1)
+    assert.strictEqual(decodedDealGame.rounds[0]?.actions.length, 1)
+    const firstAction = decodedDealGame.rounds[0]?.actions[0]
+    assert.ok(firstAction !== undefined && firstAction.type === 'RecordDealTile')
+    assert.strictEqual(firstAction.seat, 2)
+    assert.strictEqual(firstAction.tile, '6s')
+    assert.deepStrictEqual(firstAction.doras, ['1m'])
+
+    // 3. GameDetailRecords container with field 1 records
+    const mock = new MockLiqiBinaryDecoder()
+    const recordBytes1 = decoder.encodeWrapper(dealWrapper.name, dealWrapper.data)
+    const recordBytes2 = decoder.encodeWrapper(newRoundWrapper.name, newRoundWrapper.data)
+    const containerBuf = new Uint8Array([
+        ...mock.testWriteLengthDelimited(1, recordBytes2),
+        ...mock.testWriteLengthDelimited(1, recordBytes1)
+    ])
+    const decodedContainerGame = decoder.decodeGameRecord(containerBuf)
+    assert.strictEqual(decodedContainerGame.uuid, 'game-detail-record')
+    assert.strictEqual(decodedContainerGame.rounds.length, 1)
+    assert.strictEqual(decodedContainerGame.rounds[0]?.actions.length, 1)
+})
+
+test('LiqiBinaryDecoder - Auto-detect XOR obfuscation for payloads without Field 1', () => {
+    const decoder = new LiqiBinaryDecoder()
+    const mock = new MockLiqiBinaryDecoder()
+
+    // 1. RecordDealTile where seat = 0 (omitted in proto3, starts with Field 2 0x12)
+    const field2Only = mock.testWriteStringField(2, '7p')
+    const obfuscatedDeal = mock.testObfuscate(field2Only)
+
+    // First byte of plain is 0x12, obfuscated is 0x12 ^ 0x84 = 0x96
+    assert.strictEqual(field2Only[0], 0x12)
+    assert.strictEqual(obfuscatedDeal[0], 0x96)
+    assert.strictEqual(mock.testIsObfuscatedPayload(obfuscatedDeal), true)
+    assert.strictEqual(mock.testIsObfuscatedPayload(field2Only), false)
+
+    // Decode action with isObfuscated undefined (auto-detect)
+    const decodedDeal = decoder.decodeAction('.lq.RecordDealTile', obfuscatedDeal)
+    assert.strictEqual(decodedDeal.type, 'RecordDealTile')
+    if (decodedDeal.type === 'RecordDealTile') {
+        assert.strictEqual(decodedDeal.seat, 0)
+        assert.strictEqual(decodedDeal.tile, '7p')
+    }
+
+    // 2. RecordNewRound East 1 round 0 (chang=0, ju=0, ben=0, liqi=0 all omitted, starts with Field 5 0x2a)
+    const field5Dora = mock.testWriteStringField(5, '4z')
+    const field6Scores = mock.testWritePackedVarints(6, [35000, 35000, 35000])
+    const newRoundPayload = new Uint8Array([...field5Dora, ...field6Scores])
+    const obfuscatedNewRound = mock.testObfuscate(newRoundPayload)
+
+    // First byte of plain is 0x2a, obfuscated is 0x2a ^ 0x84 = 0xae
+    assert.strictEqual(newRoundPayload[0], 0x2a)
+    assert.strictEqual(obfuscatedNewRound[0], 0xae)
+    assert.strictEqual(mock.testIsObfuscatedPayload(obfuscatedNewRound), true)
+    assert.strictEqual(mock.testIsObfuscatedPayload(newRoundPayload), false)
+
+    const decodedNewRound = decoder.decodeAction('.lq.RecordNewRound', obfuscatedNewRound)
+    assert.strictEqual(decodedNewRound.type, 'RecordNewRound')
+    if (decodedNewRound.type === 'RecordNewRound') {
+        assert.strictEqual(decodedNewRound.chang, 0)
+        assert.strictEqual(decodedNewRound.ju, 0)
+        assert.strictEqual(decodedNewRound.dora, '4z')
+        assert.deepStrictEqual(decodedNewRound.scores, [35000, 35000, 35000, 0])
+    }
+})
+
+test('LiqiBinaryDecoder - parseProtoFields bounds checking prevents truncated fields', () => {
+    const mock = new MockLiqiBinaryDecoder()
+
+    // 1. Length-delimited wireType 2: length specified as 100, but only 4 bytes in buffer
+    const truncatedWire2 = new Uint8Array([0x0a, 100, 1, 2, 3, 4])
+    const fields2 = mock.testParseProtoFields(truncatedWire2)
+    assert.strictEqual(fields2.length, 0)
+
+    // Valid wireType 2 should parse normally
+    const validWire2 = new Uint8Array([0x0a, 4, 1, 2, 3, 4])
+    const validFields2 = mock.testParseProtoFields(validWire2)
+    assert.strictEqual(validFields2.length, 1)
+    assert.strictEqual(validFields2[0]?.fieldNumber, 1)
+    assert.strictEqual(validFields2[0]?.wireType, 2)
+    assert.strictEqual(validFields2[0]?.data?.length, 4)
+
+    // 2. 64-bit wireType 1: only 4 bytes available (needs 8)
+    const truncatedWire1 = new Uint8Array([0x09, 1, 2, 3, 4])
+    const fields1 = mock.testParseProtoFields(truncatedWire1)
+    assert.strictEqual(fields1.length, 0)
+
+    // Valid wireType 1
+    const validWire1 = new Uint8Array([0x09, 1, 2, 3, 4, 5, 6, 7, 8])
+    const validFields1 = mock.testParseProtoFields(validWire1)
+    assert.strictEqual(validFields1.length, 1)
+    assert.strictEqual(validFields1[0]?.data?.length, 8)
+
+    // 3. 32-bit wireType 5: only 2 bytes available (needs 4)
+    const truncatedWire5 = new Uint8Array([0x0d, 1, 2])
+    const fields5 = mock.testParseProtoFields(truncatedWire5)
+    assert.strictEqual(fields5.length, 0)
+
+    // Valid wireType 5
+    const validWire5 = new Uint8Array([0x0d, 1, 2, 3, 4])
+    const validFields5 = mock.testParseProtoFields(validWire5)
+    assert.strictEqual(validFields5.length, 1)
+    assert.strictEqual(validFields5[0]?.data?.length, 4)
+})
+
+test('LiqiBinaryDecoder - 3-Player (Sanma) scores defaults handling in RecordNewRound', () => {
+    const mock = new MockLiqiBinaryDecoder()
+
+    // Case 1: scores has 3 elements [35000, 35000, 35000] -> seat 3 must be 0
+    const hand0 = ['1m', '9m', '1p', '9p', '1s', '9s', '1z', '2z', '3z', '4z', '5z', '6z', '7z']
+    const chunkScores3 = mock.testWritePackedVarints(6, [35000, 35000, 35000])
+    const chunkDora = mock.testWriteStringField(5, '1p')
+    const handChunks: Uint8Array[] = []
+    for (const t of hand0) {
+        handChunks.push(mock.testWriteStringField(7, t))
+        handChunks.push(mock.testWriteStringField(8, t))
+        handChunks.push(mock.testWriteStringField(9, t))
+    }
+    const rawSanmaBuf = new Uint8Array([...chunkScores3, ...chunkDora, ...new Uint8Array(handChunks.flatMap(c => Array.from(c)))])
+    const decodedSanma = mock.testDecodeRecordNewRound(rawSanmaBuf)
+
+    assert.strictEqual(decodedSanma.scores.length, 4)
+    assert.strictEqual(decodedSanma.scores[0], 35000)
+    assert.strictEqual(decodedSanma.scores[1], 35000)
+    assert.strictEqual(decodedSanma.scores[2], 35000)
+    assert.strictEqual(decodedSanma.scores[3], 0)
+
+    // Case 2: scores is empty, but hands[3] is empty and hands[0] has tiles (Sanma fallback)
+    const rawSanmaNoScores = new Uint8Array([...chunkDora, ...new Uint8Array(handChunks.flatMap(c => Array.from(c)))])
+    const decodedSanmaNoScores = mock.testDecodeRecordNewRound(rawSanmaNoScores)
+    assert.deepStrictEqual(decodedSanmaNoScores.scores, [35000, 35000, 35000, 0])
+
+    // Case 3: 4-Player mahjong with empty scores -> fallback to [25000, 25000, 25000, 25000]
+    const yonmaHandsChunks: Uint8Array[] = [...handChunks]
+    for (const t of hand0) {
+        yonmaHandsChunks.push(mock.testWriteStringField(10, t))
+    }
+    const rawYonmaNoScores = new Uint8Array([...chunkDora, ...new Uint8Array(yonmaHandsChunks.flatMap(c => Array.from(c)))])
+    const decodedYonmaNoScores = mock.testDecodeRecordNewRound(rawYonmaNoScores)
+    assert.deepStrictEqual(decodedYonmaNoScores.scores, [25000, 25000, 25000, 25000])
+
+    // Case 4: 4-Player mahjong with 4 custom scores
+    const chunkScores4 = mock.testWritePackedVarints(6, [28000, 22000, 25000, 25000])
+    const rawYonmaScores4 = new Uint8Array([...chunkScores4, ...rawYonmaNoScores])
+    const decodedYonmaScores4 = mock.testDecodeRecordNewRound(rawYonmaScores4)
+    assert.deepStrictEqual(decodedYonmaScores4.scores, [28000, 22000, 25000, 25000])
+})
+
+test('LiqiBinaryDecoder - Exported from packages/mahjong-core/src/index.ts barrel', () => {
+    const decoder = new CoreLiqiBinaryDecoder()
+    assert.ok(decoder instanceof LiqiBinaryDecoder)
+    assert.strictEqual(typeof decoder.decode, 'function')
+    assert.strictEqual(typeof decoder.encode, 'function')
 })
