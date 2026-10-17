@@ -8,9 +8,10 @@ export class LuckEvaluator {
 
     public evaluateRound(round: MajsoulRoundRecord, targetSeat: SeatIndex): RoundLuckMetric {
         /*_ GEMINI THINKING _*/
+        const is3P = round.actions.some((a) => a.type === 'RecordBaBei') || (round.header.hands[3]?.length ?? 0) === 0
         const startingHand = round.header.hands[targetSeat] ?? []
-        const startShanten = this.shantenCalc.calculate(startingHand)
-        const startDoraCount = this.countDora(startingHand, [round.header.dora])
+        const startShanten = this.shantenCalc.calculate(startingHand, is3P)
+        let startDoraCount = this.countDora(startingHand, [round.header.dora], is3P)
 
         let drawCount = 0
         let effectiveDraws = 0
@@ -26,7 +27,7 @@ export class LuckEvaluator {
             if (action.type === 'RecordDealTile' && action.seat === targetSeat) {
                 drawCount++
                 currentHand.push(action.tile)
-                const newShanten = this.shantenCalc.calculate(currentHand)
+                const newShanten = this.shantenCalc.calculate(currentHand, is3P)
                 // If draw reduced shanten or maintained tenpai
                 if (newShanten < currentShanten) {
                     effectiveDraws++
@@ -36,7 +37,16 @@ export class LuckEvaluator {
                 if (idx !== -1) {
                     currentHand.splice(idx, 1)
                 }
-                currentShanten = this.shantenCalc.calculate(currentHand)
+                currentShanten = this.shantenCalc.calculate(currentHand, is3P)
+            } else if (action.type === 'RecordBaBei' && action.seat === targetSeat) {
+                const idx = currentHand.indexOf('4z')
+                if (idx !== -1) {
+                    currentHand.splice(idx, 1)
+                    startDoraCount++
+                }
+                if (currentHand.length >= 13) {
+                    currentShanten = this.shantenCalc.calculate(currentHand, is3P)
+                }
             } else if (action.type === 'RecordHule') {
                 for (const h of action.hules) {
                     if (h.seat === targetSeat) {
@@ -78,14 +88,14 @@ export class LuckEvaluator {
         }
     }
 
-    private countDora(hand: readonly string[], indicators: readonly string[]): number {
+    protected countDora(hand: readonly string[], indicators: readonly string[], is3P: boolean = false): number {
         let count = 0
         for (const tile of hand) {
             if (TileConverter.isRedDora(tile)) {
                 count++
             }
             for (const indicator of indicators) {
-                const nextTile = this.getNextDoraTile(indicator)
+                const nextTile = this.getNextDoraTile(indicator, is3P)
                 const norm = tile.replace('0m', '5m').replace('0p', '5p').replace('0s', '5s')
                 if (norm === nextTile) {
                     count++
@@ -95,10 +105,14 @@ export class LuckEvaluator {
         return count
     }
 
-    private getNextDoraTile(indicator: string): string {
+    protected getNextDoraTile(indicator: string, is3P: boolean = false): string {
         const norm = indicator.replace('0m', '5m').replace('0p', '5p').replace('0s', '5s')
         const suit = norm.slice(-1)
         const val = parseInt(norm.slice(0, -1), 10)
+
+        if (is3P && suit === 'm' && val === 1) {
+            return '9m'
+        }
 
         if (suit === 'z') {
             if (val >= 1 && val <= 4) {

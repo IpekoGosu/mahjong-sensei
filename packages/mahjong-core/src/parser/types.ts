@@ -75,13 +75,23 @@ export interface MajsoulRecordNoTile {
     readonly deltaScores: readonly [number, number, number, number]
 }
 
-export type MajsoulRoundAction =
+export interface MajsoulRecordBaBei {
+    readonly type: 'RecordBaBei'
+    readonly seat: SeatIndex
+    readonly isMoqie: boolean
+    readonly doras?: readonly string[]
+}
+
+export type MajsoulActionRecord =
     | MajsoulRecordDealTile
     | MajsoulRecordDiscardTile
     | MajsoulRecordChiPengGang
     | MajsoulRecordAnGangAddGang
+    | MajsoulRecordBaBei
     | MajsoulRecordHule
     | MajsoulRecordNoTile
+
+export type MajsoulRoundAction = MajsoulActionRecord
 
 export interface MajsoulRoundRecord {
     readonly header: MajsoulRecordNewRound

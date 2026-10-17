@@ -8,20 +8,24 @@ const YAOJUU_INDICES: readonly number[] = [
 ]
 
 export class ShantenCalculator {
-    public calculate(tiles: readonly string[]): number {
+    public calculate(tiles: readonly string[], is3P: boolean = false): number {
         const counts = TileConverter.handToCountArray(tiles)
-        const regular = this.calculateRegular(counts)
-        const chitoi = this.calculateChitoitsu(counts)
+        const regular = this.calculateRegular(counts, is3P)
+        const chitoi = this.calculateChitoitsu(counts, is3P)
         const kokushi = this.calculateKokushi(counts)
 
         return Math.min(regular, chitoi, kokushi)
     }
 
-    public calculateChitoitsu(counts: readonly number[]): number {
+    public calculateChitoitsu(counts: readonly number[], is3P: boolean = false): number {
+        /*_ GEMINI THINKING _*/
         let pairs = 0
         let kinds = 0
 
         for (let i = 0; i < TILE_COUNT; i++) {
+            if (is3P && i >= 1 && i <= 7) {
+                continue
+            }
             const count = counts[i] ?? 0
             if (count >= 2) {
                 pairs++
@@ -55,22 +59,27 @@ export class ShantenCalculator {
         return 13 - uniqueYaojuu - (hasYaojuuPair ? 1 : 0)
     }
 
-    public calculateRegular(counts: readonly number[]): number {
+    public calculateRegular(counts: readonly number[], is3P: boolean = false): number {
+        /*_ GEMINI THINKING _*/
         const countsCopy = [...counts]
         const state = { bestShanten: 8 }
 
         // Try using each tile as the pair (head)
         for (let i = 0; i < TILE_COUNT; i++) {
+            // In 3P mode, manzu tiles 2m..8m (indices 1..7) do not exist and cannot form pairs
+            if (is3P && i >= 1 && i <= 7) {
+                continue
+            }
             const count = countsCopy[i] ?? 0
             if (count >= 2) {
                 countsCopy[i] = count - 2
-                this.searchMelds(countsCopy, 0, 1, 0, state)
+                this.searchMelds(countsCopy, 0, 1, 0, state, is3P)
                 countsCopy[i] = count
             }
         }
 
         // Try without a pair
-        this.searchMelds(countsCopy, 0, 0, 0, state)
+        this.searchMelds(countsCopy, 0, 0, 0, state, is3P)
 
         return state.bestShanten
     }
@@ -80,7 +89,8 @@ export class ShantenCalculator {
         index: number,
         pairs: number,
         melds: number,
-        state: { bestShanten: number }
+        state: { bestShanten: number },
+        is3P: boolean = false
     ): void {
         /*_ GEMINI THINKING _*/
         // Skip tiles with 0 count
@@ -90,7 +100,7 @@ export class ShantenCalculator {
 
         if (index >= TILE_COUNT) {
             // Count remaining partial melds (taatsu)
-            const partials = this.countPartials(counts)
+            const partials = this.countPartials(counts, is3P)
             let totalMelds = melds + partials
             if (totalMelds > 4) {
                 totalMelds = 4
@@ -104,16 +114,17 @@ export class ShantenCalculator {
 
         const count = counts[index] ?? 0
 
-        // 1. Try Koutsu (Triplet)
-        if (count >= 3) {
+        // 1. Try Koutsu (Triplet) - in 3P mode, 2m-8m cannot form triplets, only 1m and 9m
+        const canFormTriplet = !is3P || !(index >= 1 && index <= 7)
+        if (canFormTriplet && count >= 3) {
             counts[index] = count - 3
-            this.searchMelds(counts, index, pairs, melds + 1, state)
+            this.searchMelds(counts, index, pairs, melds + 1, state, is3P)
             counts[index] = count
         }
 
-        // 2. Try Shuntsu (Sequence) - only suited tiles (0..26) and not wrapping around suits
+        // 2. Try Shuntsu (Sequence) - in 3P mode, manzu tiles (0..8) cannot form sequences
         const suitOffset = index % 9
-        const isSuited = index < 27
+        const isSuited = is3P ? (index >= 9 && index < 27) : (index < 27)
         if (isSuited && suitOffset <= 6) {
             const next1 = counts[index + 1] ?? 0
             const next2 = counts[index + 2] ?? 0
@@ -121,7 +132,7 @@ export class ShantenCalculator {
                 counts[index] = count - 1
                 counts[index + 1] = next1 - 1
                 counts[index + 2] = next2 - 1
-                this.searchMelds(counts, index, pairs, melds + 1, state)
+                this.searchMelds(counts, index, pairs, melds + 1, state, is3P)
                 counts[index] = count
                 counts[index + 1] = next1
                 counts[index + 2] = next2
@@ -129,15 +140,19 @@ export class ShantenCalculator {
         }
 
         // 3. Skip current tile without forming a full meld
-        this.searchMelds(counts, index + 1, pairs, melds, state)
+        this.searchMelds(counts, index + 1, pairs, melds, state, is3P)
     }
 
-    private countPartials(counts: readonly number[]): number {
+    private countPartials(counts: readonly number[], is3P: boolean = false): number {
+        /*_ GEMINI THINKING _*/
         let partials = 0
         const copy = [...counts]
 
-        // Pairs
+        // Pairs - in 3P mode, 2m-8m cannot form pairs
         for (let i = 0; i < TILE_COUNT; i++) {
+            if (is3P && i >= 1 && i <= 7) {
+                continue
+            }
             const c = copy[i] ?? 0
             if (c >= 2) {
                 partials++
@@ -145,8 +160,9 @@ export class ShantenCalculator {
             }
         }
 
-        // Sequences of 2 (penchan, ryanmen, kanchan)
-        for (let i = 0; i < 27; i++) {
+        // Sequences of 2 (penchan, ryanmen, kanchan) - in 3P mode, manzu (0..8) cannot form partial sequences
+        const startSuit = is3P ? 9 : 0
+        for (let i = startSuit; i < 27; i++) {
             const suitOffset = i % 9
             const c0 = copy[i] ?? 0
             if (c0 > 0 && suitOffset <= 7) {
