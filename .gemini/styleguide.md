@@ -190,7 +190,8 @@ Mahjong Sensei의 핵심 도메인 로직을 검토할 때 다음의 불변식�
 
 ### 5.1 4인마(4P) vs 3인마(3P) 룰셋 불변식 (4-Player vs 3-Player Differences)
 1. **3인마 (3-Player Mahjong / 3P / 삼총)**:
-   - **패 구성**: 만수패 중 **`2m` ~ `8m`은 완전히 제외**됩니다 (만수패는 `1m`, `9m`만 사용).
+   - **패 구성 및 만수패 제약 (Manzu Tiles & Sequences)**: 만수패 중 **`2m` ~ `8m`은 완전히 제외**됩니다 (만수패는 `1m`, `9m`만 사용). `1m`과 `9m`은 또이츠(Pairs)나 커츠(Triplets / koutsu)만 구성할 수 있으며, 결코 순츠(Sequences / shuntsu)나 타츠(Partial sequences / taatsu)를 구성할 수 없습니다.
+   - **3P 도라 표시패 워프 규칙 (3P Dora Indicator Warp)**: 도라 및 우라도라 표시패가 `1m`일 때 실제 도라패는 `2m`이 아니라 **`9m`**으로 워프(Warp) 판정됩니다 (1m indicator -> 9m dora, not 2m).
    - **북패 (4z)**: 일반 자패가 아니며 **키타(Kita / 拔北 / RecordBaBei)** 빼기 도라로 사용됩니다.
    - **순위 (Placement)**: 참여 인원이 3명이므로 **최대 순위는 3위(1위, 2위, 3위 라스)**입니다. **절대로 4위가 존재할 수 없습니다.**
    - **울기 규칙**: 치(Chi)는 불가능하며, 퐁(Pon)과 깡(Kan)만 허용됩니다.
@@ -204,7 +205,7 @@ Mahjong Sensei의 핵심 도메인 로직을 검토할 때 다음의 불변식�
 Mahjong Sensei의 철학은 **운과 실력의 철저한 수학적 분리**입니다. 두 지표의 속성이 뒤섞이지 않도록 엄격히 리뷰합니다.
 
 1. **운 지표 (Luck Metrics, 0~100점)**:
-   - **배패 샹텐수 (Starting Hand Shanten)**: 초기 배패의 완성도 (베이스라인: 평균 3.5 샹텐).
+   - **배패 샹텐수 (Starting Hand Shanten)**: 초기 배패의 완성도 (배패 샹텐수 베이스라인은 4인마 4P `3.50`, 3인마 3P `3.25`로 상이 — Starting shanten baselines differ between 4P (3.50) and 3P (3.25)).
    - **도라 보유량 (Starting Dora & Aka-dora)**: 배패에 포함된 도라(`dora`) 및 적도라(`0m`, `0p`, `0s`) 매수.
    - **유효 츠모 획득률 (Draw Luck)**: 샹텐수를 줄여주는 유효패를 얼마나 이른 순번에 츠모했는가.
    - **뒷도라 적중 횟수 (Uradora Jackpot)**: 리치 화료 시 획득한 뒷도라 매수.
@@ -212,7 +213,7 @@ Mahjong Sensei의 철학은 **운과 실력의 철저한 수학적 분리**입�
 2. **실력 지표 (Skill Metrics, 0~100점)**:
    - **패효율 준수율 (Tile Efficiency)**: 매 순마다 유효패 잔여 매수를 극대화하는 정석 타패를 선택했는가.
    - **방총 회피율 및 페널티 (Deal-in Avoidance / Penalty)**: 상대의 텐파이/리치 상태에서 위험패를 무리하게 타패하여 쏘였는지 여부.
-   - **수비 및 내리기 정확도 (Defense & Fold Accuracy)**: 카와(Kawa)의 현물(Genbutsu), 스지(Suji), 카베(Kabe) 등 안전패 원리에 입각하여 타패했는가.
+   - **수비 및 내리기 정확도 (Defense & Fold Accuracy)**: 카와(Kawa)의 안전패 원리에 입각하여 타패했는가. 상대 리치 하에서 현물(Genbutsu, 1.0 safety)은 리치자 본인이 버린 패(tiles discarded by the Riichi player)뿐만 아니라, 리치 선언 이후 타가가 버려 통과된 모든 패(tiles discarded by any other player after the Riichi declaration / post-Riichi Furiten / Awase-uchi)를 모두 포함합니다. 스지(Suji), 카베(Kabe) 등 통계적 안전패 판정 원칙도 함께 엄격히 준수합니다.
 3. **4사분면 퍼포먼스 매트릭스 (Performance Quadrants)**:
    - `SKILLFUL_WIN` (1사분면): 높은 실력 + 높은 운 (완벽한 승리)
    - `UNLUCKY_LOSS` (2사분면): 높은 실력 + 낮은 운 (억까 패배, 멘탈 케어 대상)

@@ -14,5 +14,8 @@ ignore_patterns:
   - "node_modules/**"
   - "dist/**"
   - ".next/**"
+  - "out/**"
+  - ".turbo/**"
+  - "**/*.tsbuildinfo"
   - "pnpm-lock.yaml"
   - ".worktrees/**"
