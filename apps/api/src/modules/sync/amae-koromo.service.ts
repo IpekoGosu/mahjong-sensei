@@ -184,55 +184,48 @@ export class AmaeKoromoService {
                 }
             })
 
-            // Clean previous sync games for this mode
-            await tx.game.deleteMany({
-                where: {
-                    id: { startsWith: `amae-sync-${mode}-${accountId}-` }
-                }
-            })
-
             const baseTimestamp = found.latest_timestamp ? found.latest_timestamp * 1000 : now
 
             /*_ GEMINI THINKING _*/
             const gamesData: {
-                id: string
-                roomType: string
-                gameDate: Date
+                readonly id: string
+                readonly roomType: string
+                readonly gameDate: Date
             }[] = []
 
             const participantsData: {
-                id: string
-                gameId: string
-                playerId: string
-                seat: number
-                finalScore: number
-                finalRank: number
-                luckScore: number
-                skillScore: number
+                readonly id: string
+                readonly gameId: string
+                readonly playerId: string
+                readonly seat: number
+                readonly finalScore: number
+                readonly finalRank: number
+                readonly luckScore: number
+                readonly skillScore: number
             }[] = []
 
             const roundsData: {
-                id: string
-                gameId: string
-                roundIndex: number
-                honba: number
-                riichiSticks: number
+                readonly id: string
+                readonly gameId: string
+                readonly roundIndex: number
+                readonly honba: number
+                readonly riichiSticks: number
             }[] = []
 
             const roundMetricsData: {
-                id: string
-                roundId: string
-                seat: number
-                startShanten: number
-                startDoraCount: number
-                drawLuckRatio: number
-                uradoraHits: number
-                dealInScore: number
-                tsumoLossScore: number
-                tileEfficiency: number
-                luckScore: number
-                skillScore: number
-                isWin: boolean
+                readonly id: string
+                readonly roundId: string
+                readonly seat: number
+                readonly startShanten: number
+                readonly startDoraCount: number
+                readonly drawLuckRatio: number
+                readonly uradoraHits: number
+                readonly dealInScore: number
+                readonly tsumoLossScore: number
+                readonly tileEfficiency: number
+                readonly luckScore: number
+                readonly skillScore: number
+                readonly isWin: boolean
             }[] = []
 
             for (let i = 0; i < gameCount; i++) {
@@ -333,11 +326,18 @@ export class AmaeKoromoService {
                 })
             }
 
+            // Clean previous sync games for this mode
+            await tx.game.deleteMany({
+                where: {
+                    id: { startsWith: `amae-sync-${mode}-${accountId}-` }
+                }
+            })
+
             if (gamesData.length > 0) {
-                await tx.game.createMany({ data: gamesData })
-                await tx.gameParticipant.createMany({ data: participantsData })
-                await tx.round.createMany({ data: roundsData })
-                await tx.roundMetric.createMany({ data: roundMetricsData })
+                await tx.game.createMany({ data: gamesData, skipDuplicates: true })
+                await tx.gameParticipant.createMany({ data: participantsData, skipDuplicates: true })
+                await tx.round.createMany({ data: roundsData, skipDuplicates: true })
+                await tx.roundMetric.createMany({ data: roundMetricsData, skipDuplicates: true })
             }
         })
 
