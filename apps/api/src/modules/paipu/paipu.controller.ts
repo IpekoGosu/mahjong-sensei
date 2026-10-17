@@ -9,7 +9,10 @@ export class PaipuController {
     public constructor(private readonly paipuService: PaipuService) {}
 
     @Post('import')
-    public async import(@Body(new ImportPaipuPipe()) dto: ImportPaipuDto): Promise<{ success: boolean; gameId: string }> {
+    public async import(@Body(new ImportPaipuPipe()) dto: ImportPaipuDto): Promise<{
+        readonly success: boolean
+        readonly gameId: string
+    }> {
         /*_ GEMINI THINKING _*/
         const validated = ImportPaipuDto.validate(dto)
         return await this.paipuService.importPaipu(validated.urlOrUuid)
@@ -17,10 +20,10 @@ export class PaipuController {
 
     @Post('import-batch')
     public async importBatch(@Body(new ImportBatchPaipuPipe()) dto: ImportBatchPaipuDto): Promise<{
-        total: number
-        imported: number
-        failed: number
-        gameIds: readonly string[]
+        readonly total: number
+        readonly imported: number
+        readonly failed: number
+        readonly gameIds: readonly string[]
     }> {
         /*_ GEMINI THINKING _*/
         const validated = ImportBatchPaipuDto.validate(dto)

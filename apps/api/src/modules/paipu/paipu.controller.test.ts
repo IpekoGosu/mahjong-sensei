@@ -18,15 +18,18 @@ class MockPaipuService extends PaipuService {
         super(new MockPrismaService())
     }
 
-    public override async importPaipu(urlOrUuid: string): Promise<{ success: boolean; gameId: string }> {
+    public override async importPaipu(urlOrUuid: string): Promise<{
+        readonly success: boolean
+        readonly gameId: string
+    }> {
         return { success: true, gameId: urlOrUuid }
     }
 
     public override async importBatch(inputs: readonly string[]): Promise<{
-        total: number
-        imported: number
-        failed: number
-        gameIds: readonly string[]
+        readonly total: number
+        readonly imported: number
+        readonly failed: number
+        readonly gameIds: readonly string[]
     }> {
         return {
             total: inputs.length,
@@ -60,9 +63,22 @@ test('ImportPaipuDto - runtime validation', () => {
     const tooLong = 'a'.repeat(501)
     assert.throws(() => ImportPaipuDto.validate({ urlOrUuid: tooLong }), BadRequestException)
 
+    // Should reject padded string with trimmed length exceeding 500 characters
+    const paddedInvalid = '   ' + 'a'.repeat(501) + '   '
+    assert.throws(() => ImportPaipuDto.validate({ urlOrUuid: paddedInvalid }), BadRequestException)
+
     // Should accept valid urlOrUuid and trim it
     const valid = ImportPaipuDto.validate({ urlOrUuid: '  20240101-uuid-1234  ' })
     assert.strictEqual(valid.urlOrUuid, '20240101-uuid-1234')
+
+    // Should accept padded string with trimmed length up to 500 characters
+    const paddedValid = '   ' + 'a'.repeat(500) + '   '
+    const validPadded = ImportPaipuDto.validate({ urlOrUuid: paddedValid })
+    assert.strictEqual(validPadded.urlOrUuid.length, 500)
+
+    // Fast-path: passing an already constructed instance returns the same instance
+    assert.strictEqual(ImportPaipuDto.validate(valid), valid)
+    assert.strictEqual(ImportPaipuDto.validate(validPadded), validPadded)
 
     // Pipe should also validate correctly
     const pipe = new ImportPaipuPipe()
@@ -102,6 +118,10 @@ test('ImportBatchPaipuDto - runtime validation', () => {
     // Should reject item longer than 500 characters
     assert.throws(() => ImportBatchPaipuDto.validate({ inputs: ['a'.repeat(501)] }), BadRequestException)
 
+    // Should reject padded item with trimmed length exceeding 500 characters
+    const paddedInvalid = '   ' + 'a'.repeat(501) + '   '
+    assert.throws(() => ImportBatchPaipuDto.validate({ inputs: [paddedInvalid] }), BadRequestException)
+
     // Should accept valid array of 1..100 items
     const validInputs = ['game-1', '  game-2  ', 'game-3']
     const validBatch = ImportBatchPaipuDto.validate({ inputs: validInputs })
@@ -109,6 +129,19 @@ test('ImportBatchPaipuDto - runtime validation', () => {
     assert.strictEqual(validBatch.inputs[0], 'game-1')
     assert.strictEqual(validBatch.inputs[1], 'game-2')
     assert.strictEqual(validBatch.inputs[2], 'game-3')
+
+    // Should accept padded item with trimmed length up to 500 characters consistently
+    const paddedValid = '   ' + 'a'.repeat(500) + '   '
+    const validBatchPadded = ImportBatchPaipuDto.validate({ inputs: [paddedValid] })
+    const firstPaddedInput = validBatchPadded.inputs[0]
+    if (firstPaddedInput === undefined) {
+        assert.fail('firstPaddedInput must be defined')
+    }
+    assert.strictEqual(firstPaddedInput.length, 500)
+
+    // Fast-path: passing an already constructed instance returns the same instance
+    assert.strictEqual(ImportBatchPaipuDto.validate(validBatch), validBatch)
+    assert.strictEqual(ImportBatchPaipuDto.validate(validBatchPadded), validBatchPadded)
 
     // Pipe should also validate correctly
     const pipe = new ImportBatchPaipuPipe()
@@ -137,6 +170,12 @@ test('PaipuController - controller level validation', async () => {
     assert.strictEqual(importRes.success, true)
     assert.strictEqual(importRes.gameId, 'uuid-999')
 
+    // Fast-path when controller receives already-instantiated DTO
+    const preValidatedDto = new ImportPaipuDto('uuid-fast-path')
+    const fastPathImportRes = await controller.import(preValidatedDto)
+    assert.strictEqual(fastPathImportRes.success, true)
+    assert.strictEqual(fastPathImportRes.gameId, 'uuid-fast-path')
+
     // Controller import-batch validation
     await assert.rejects(
         async () => await controller.importBatch({ inputs: [] }),
@@ -150,4 +189,10 @@ test('PaipuController - controller level validation', async () => {
     const batchRes = await controller.importBatch({ inputs: ['  batch-uuid-1  '] })
     assert.strictEqual(batchRes.total, 1)
     assert.strictEqual(batchRes.gameIds[0], 'batch-uuid-1')
+
+    // Fast-path when controller receives already-instantiated Batch DTO
+    const preValidatedBatchDto = new ImportBatchPaipuDto(['batch-uuid-fast-path'])
+    const fastPathBatchRes = await controller.importBatch(preValidatedBatchDto)
+    assert.strictEqual(fastPathBatchRes.total, 1)
+    assert.strictEqual(fastPathBatchRes.gameIds[0], 'batch-uuid-fast-path')
 })

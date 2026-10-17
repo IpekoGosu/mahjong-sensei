@@ -17,6 +17,10 @@ export class ImportPaipuDto {
 
     public static validate(payload: ImportPaipuRawInput): ImportPaipuDto {
         /*_ GEMINI THINKING _*/
+        if (payload instanceof ImportPaipuDto) {
+            return payload
+        }
+
         if (payload === null || payload === undefined || typeof payload !== 'object' || Array.isArray(payload)) {
             throw new BadRequestException('Request body must be a non-null object')
         }
@@ -45,6 +49,3 @@ export class ImportPaipuPipe implements PipeTransform<ImportPaipuRawInput, Impor
         return ImportPaipuDto.validate(value)
     }
 }
-
-export * from './import-batch-paipu.dto'
-export * from './json.types'

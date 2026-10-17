@@ -17,6 +17,10 @@ export class ImportBatchPaipuDto {
 
     public static validate(payload: ImportBatchPaipuRawInput): ImportBatchPaipuDto {
         /*_ GEMINI THINKING _*/
+        if (payload instanceof ImportBatchPaipuDto) {
+            return payload
+        }
+
         if (payload === null || payload === undefined || typeof payload !== 'object' || Array.isArray(payload)) {
             throw new BadRequestException('Request body must be a non-null object')
         }
@@ -35,17 +39,13 @@ export class ImportBatchPaipuDto {
         }
 
         const validatedInputs: string[] = []
-        for (let i = 0; i < rawInputs.length; i++) {
-            const item = rawInputs[i]
+        for (const [i, item] of rawInputs.entries()) {
             if (typeof item !== 'string') {
                 throw new BadRequestException(`Field inputs[${i}] must be a string`)
             }
             const trimmed = item.trim()
-            if (trimmed.length < 1) {
-                throw new BadRequestException(`Field inputs[${i}] must be a non-empty string`)
-            }
-            if (item.length > 500 || trimmed.length > 500) {
-                throw new BadRequestException(`Field inputs[${i}] must not exceed 500 characters`)
+            if (trimmed.length < 1 || trimmed.length > 500) {
+                throw new BadRequestException(`Field inputs[${i}] must have trimmed length between 1 and 500 characters`)
             }
             validatedInputs.push(trimmed)
         }
