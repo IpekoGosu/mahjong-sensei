@@ -37,3 +37,7 @@ postgres_data/
 # Logs
 logs/
 *.log
+
+# Git Worktrees
+.worktrees/
+
