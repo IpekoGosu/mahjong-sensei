@@ -199,3 +199,227 @@ test('SkillEvaluator - evaluateRound: foldAccuracyRate computation under Riichi'
     // 2 post-riichi discards: 1m (0.85) + 2s (1.0) = 1.85 / 2 = 0.925 -> 0.93
     assert.strictEqual(metric.foldAccuracyRate, 0.93)
 })
+
+test('SkillEvaluator - evaluateSafetyAgainstPlayer: Kabe / No-Chance suited tile safety', () => {
+    const evaluator = new MockSkillEvaluator()
+    const emptyDiscards: readonly string[] = []
+
+    // 1m with 4 copies of 3m visible (Kabe): boosted from 0.45 to 0.85
+    const visible3m4 = new Map<string, number>([['3m', 4]])
+    assert.strictEqual(evaluator.testEvaluateSafetyAgainstPlayer('1m', emptyDiscards, visible3m4), 0.85)
+
+    // 2m with 4 copies of 3m visible (Kabe): boosted from 0.35 to 0.85
+    assert.strictEqual(evaluator.testEvaluateSafetyAgainstPlayer('2m', emptyDiscards, visible3m4), 0.85)
+
+    // 1m with only 3 copies of 3m visible: not Kabe, normal terminal safety (0.45)
+    const visible3m3 = new Map<string, number>([['3m', 3]])
+    assert.strictEqual(evaluator.testEvaluateSafetyAgainstPlayer('1m', emptyDiscards, visible3m3), 0.45)
+    assert.strictEqual(evaluator.testEvaluateSafetyAgainstPlayer('2m', emptyDiscards, visible3m3), 0.35)
+
+    // 8p with 4 copies of 7p visible (Kabe): boosted from 0.35 to 0.85
+    const visible7p4 = new Map<string, number>([['7p', 4]])
+    assert.strictEqual(evaluator.testEvaluateSafetyAgainstPlayer('8p', emptyDiscards, visible7p4), 0.85)
+
+    // 9p with 4 copies of 7p visible (Kabe): boosted from 0.45 to 0.85
+    assert.strictEqual(evaluator.testEvaluateSafetyAgainstPlayer('9p', emptyDiscards, visible7p4), 0.85)
+
+    // 8p with 3 copies of 7p visible: not Kabe, normal safety (0.35)
+    const visible7p3 = new Map<string, number>([['7p', 3]])
+    assert.strictEqual(evaluator.testEvaluateSafetyAgainstPlayer('8p', emptyDiscards, visible7p3), 0.35)
+    assert.strictEqual(evaluator.testEvaluateSafetyAgainstPlayer('9p', emptyDiscards, visible7p3), 0.45)
+
+    // 1s with 4 copies of 2s visible (Kabe): boosted to 0.85
+    const visible2s4 = new Map<string, number>([['2s', 4]])
+    assert.strictEqual(evaluator.testEvaluateSafetyAgainstPlayer('1s', emptyDiscards, visible2s4), 0.85)
+
+    // 9s with 4 copies of 8s visible (Kabe): boosted to 0.85
+    const visible8s4 = new Map<string, number>([['8s', 4]])
+    assert.strictEqual(evaluator.testEvaluateSafetyAgainstPlayer('9s', emptyDiscards, visible8s4), 0.85)
+
+    // Genbutsu takes precedence over Kabe (1.0 > 0.85)
+    assert.strictEqual(evaluator.testEvaluateSafetyAgainstPlayer('1m', ['1m'], visible3m4), 1.0)
+})
+
+test('SkillEvaluator - evaluateRound: Post-Riichi Genbutsu / Awase-uchi evaluated as 1.0 safety', () => {
+    const evaluator = new SkillEvaluator()
+
+    const roundRecord: MajsoulRoundRecord = {
+        header: {
+            type: 'RecordNewRound',
+            chang: 0,
+            ju: 0,
+            ben: 0,
+            liqi: 0,
+            scores: [25000, 25000, 25000, 25000],
+            dora: '1p',
+            hands: [
+                ['1m', '2m', '3m', '4m', '5m', '6m', '7m', '8m', '9m', '1s', '2s', '3s', '4s'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s']
+            ]
+        },
+        actions: [
+            // Seat 1 declares Riichi and discards 4m
+            { type: 'RecordDealTile', seat: 1, tile: '4m' },
+            { type: 'RecordDiscardTile', seat: 1, tile: '4m', isMoqie: false, isLiqi: true },
+
+            // Seat 2 discards 8s (normally musuji against Seat 1, but discarded AFTER Riichi -> Genbutsu)
+            { type: 'RecordDealTile', seat: 2, tile: '8s' },
+            { type: 'RecordDiscardTile', seat: 2, tile: '8s', isMoqie: false, isLiqi: false },
+
+            // Seat 0 draws 8s and discards 8s (awase-uchi / post-riichi genbutsu)
+            { type: 'RecordDealTile', seat: 0, tile: '8s' },
+            { type: 'RecordDiscardTile', seat: 0, tile: '8s', isMoqie: true, isLiqi: false },
+
+            // Round finishes in Ryukyoku
+            { type: 'RecordNoTile', tenpaiSeats: [1], deltaScores: [-1000, 3000, -1000, -1000] }
+        ]
+    }
+
+    const metric = evaluator.evaluateRound(roundRecord, 0)
+    // 8s discarded by Seat 2 after Seat 1 Riichi must be evaluated as 1.0 Genbutsu safety for Seat 0
+    assert.strictEqual(metric.foldAccuracyRate, 1.0)
+})
+
+test('SkillEvaluator - evaluateRound: foldAccuracyRate reflected in skillScore', () => {
+    const evaluator = new SkillEvaluator()
+
+    const baseHeader = {
+        type: 'RecordNewRound' as const,
+        chang: 0,
+        ju: 0,
+        ben: 0,
+        liqi: 0,
+        scores: [25000, 25000, 25000, 25000] as const,
+        dora: '1p',
+        hands: [
+            ['1m', '2m', '3m', '4m', '5m', '6m', '7m', '8m', '9m', '1s', '2s', '3s', '4s'],
+            ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+            ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+            ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s']
+        ] as const
+    }
+
+    // Round with high fold accuracy: discards 4m (Genbutsu, safety 1.0)
+    const safeRound: MajsoulRoundRecord = {
+        header: baseHeader,
+        actions: [
+            { type: 'RecordDealTile', seat: 1, tile: '4m' },
+            { type: 'RecordDiscardTile', seat: 1, tile: '4m', isMoqie: false, isLiqi: true },
+            { type: 'RecordDealTile', seat: 0, tile: '4m' },
+            { type: 'RecordDiscardTile', seat: 0, tile: '4m', isMoqie: true, isLiqi: false },
+            { type: 'RecordNoTile', tenpaiSeats: [1], deltaScores: [-1000, 3000, -1000, -1000] }
+        ]
+    }
+
+    // Round with poor fold accuracy: discards 5p (musuji middle tile, safety 0.20)
+    const dangerRound: MajsoulRoundRecord = {
+        header: baseHeader,
+        actions: [
+            { type: 'RecordDealTile', seat: 1, tile: '4m' },
+            { type: 'RecordDiscardTile', seat: 1, tile: '4m', isMoqie: false, isLiqi: true },
+            { type: 'RecordDealTile', seat: 0, tile: '5p' },
+            { type: 'RecordDiscardTile', seat: 0, tile: '5p', isMoqie: true, isLiqi: false },
+            { type: 'RecordNoTile', tenpaiSeats: [1], deltaScores: [-1000, 3000, -1000, -1000] }
+        ]
+    }
+
+    const metricSafe = evaluator.evaluateRound(safeRound, 0)
+    const metricDanger = evaluator.evaluateRound(dangerRound, 0)
+
+    assert.strictEqual(metricSafe.foldAccuracyRate, 1.0)
+    assert.strictEqual(metricDanger.foldAccuracyRate, 0.2)
+    assert.ok(metricSafe.skillScore > metricDanger.skillScore)
+    // Safe: 50 + 16 (efficiency) + 10 (defense) = 76
+    // Danger: 50 + 16 (efficiency) - 22 (defense) = 44
+    assert.strictEqual(metricSafe.skillScore, 76)
+    assert.strictEqual(metricDanger.skillScore, 44)
+})
+
+test('SkillEvaluator - evaluateRound: Duplicate Dora indicators counted in visibleTileCounts', () => {
+    const evaluator = new SkillEvaluator()
+
+    const roundRecord: MajsoulRoundRecord = {
+        header: {
+            type: 'RecordNewRound',
+            chang: 0,
+            ju: 0,
+            ben: 0,
+            liqi: 0,
+            scores: [25000, 25000, 25000, 25000],
+            dora: '9m',
+            hands: [
+                // Hand has no 1z
+                ['1m', '2m', '3m', '4m', '5m', '6m', '7m', '8m', '9m', '1s', '2s', '3s', '4s'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s']
+            ]
+        },
+        actions: [
+            // Seat 1 reveals two duplicate '1z' dora indicators via doras array
+            { type: 'RecordDealTile', seat: 1, tile: '5p', doras: ['1z', '1z'] },
+            { type: 'RecordDiscardTile', seat: 1, tile: '5p', isMoqie: false, isLiqi: true },
+
+            // Seat 0 draws 1z and discards it.
+            // With both duplicate doras counted (2) plus drawn 1z (1), visible copies of 1z is 3 -> honor safety 0.95 (instead of 0.75)
+            { type: 'RecordDealTile', seat: 0, tile: '1z' },
+            { type: 'RecordDiscardTile', seat: 0, tile: '1z', isMoqie: true, isLiqi: false },
+
+            { type: 'RecordNoTile', tenpaiSeats: [1], deltaScores: [-1000, 3000, -1000, -1000] }
+        ]
+    }
+
+    const metric = evaluator.evaluateRound(roundRecord, 0)
+    assert.strictEqual(metric.foldAccuracyRate, 0.95)
+})
+
+test('SkillEvaluator - evaluateRound: RecordChiPengGang called tile matching and targetSeat hand sync', () => {
+    const evaluator = new SkillEvaluator()
+
+    const roundRecord: MajsoulRoundRecord = {
+        header: {
+            type: 'RecordNewRound',
+            chang: 0,
+            ju: 0,
+            ben: 0,
+            liqi: 0,
+            scores: [25000, 25000, 25000, 25000],
+            dora: '9m',
+            hands: [
+                // Seat 0 starting hand: has two 1z
+                ['1m', '2m', '3m', '4p', '5p', '6p', '7s', '8s', '9s', '1z', '1z', '2z', '3z'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s']
+            ]
+        },
+        actions: [
+            // Seat 3 discards 1z
+            { type: 'RecordDealTile', seat: 3, tile: '1z' },
+            { type: 'RecordDiscardTile', seat: 3, tile: '1z', isMoqie: false, isLiqi: false },
+
+            // Seat 0 calls Pon on 1z: meld contains ['1z', '1z', '1z']
+            // Hand tiles (two 1z) must be removed from currentHand, keeping currentHand valid
+            { type: 'RecordChiPengGang', seat: 0, meldType: 'pon', tiles: ['1z', '1z', '1z'], fromSeat: 3 },
+
+            // Seat 0 discards 2z
+            { type: 'RecordDiscardTile', seat: 0, tile: '2z', isMoqie: false, isLiqi: false },
+
+            // Opponent Seat 1 declares Riichi
+            { type: 'RecordDealTile', seat: 1, tile: '4m' },
+            { type: 'RecordDiscardTile', seat: 1, tile: '4m', isMoqie: false, isLiqi: true },
+
+            // Seat 2 calls Chi on Seat 1's 4m with called tile at index 1: ['3m', '4m', '5m']
+            // Only 3m and 5m should be added to visibleTileCounts (4m was already added as discard)
+            { type: 'RecordChiPengGang', seat: 2, meldType: 'chi', tiles: ['3m', '4m', '5m'], fromSeat: 1 },
+
+            { type: 'RecordNoTile', tenpaiSeats: [1], deltaScores: [-1000, 3000, -1000, -1000] }
+        ]
+    }
+
+    const metric = evaluator.evaluateRound(roundRecord, 0)
+    assert.strictEqual(metric.dealInMistakeRate, 0.0)
+    assert.ok(metric.tileEfficiencyRate > 0)
+})
