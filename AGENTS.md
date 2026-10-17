@@ -39,3 +39,14 @@
 5. **도구 및 주석**:
    - 패키지 매니저는 반드시 **`pnpm`** 사용
    - 복잡한 생각 과정이나 임시 기록 주석 작성 시 상단에 **`/*_ GEMINI THINKING _*/`** 마커 표기
+
+---
+
+## 3. Git 워크플로우 및 브랜치 푸시 규칙 (Git Push & Branch Policy)
+
+1. **`main` 브랜치 직접 푸시 절대 금지 (Direct Push to `main` Strictly Prohibited)**:
+   - `main` 브랜치로의 직접 `git push`는 보안 및 안정성을 위해 전면 차단됩니다 (`.githooks/pre-push` 훅 적용).
+   - 모든 기능 추가, 버그 수정, 설정 변경은 반드시 기능 브랜치(`feat/*`, `fix/*`, `chore/*` 등)를 통해 PR을 생성해야 합니다.
+2. **비-main 브랜치 자율 직접 푸시 허가 (Autonomous Direct Push for All Non-Main Branches)**:
+   - `main` 브랜치를 제외한 모든 브랜치에 대해 에이전트는 사용자의 별도 확인 대기 없이 **즉시 자율적으로 `git push` 및 PR 생성을 수행**합니다.
+   - 워크트리(`.worktrees/*`) 또는 로컬 브랜치 작업 완료 후 커밋이 생성되면 즉시 `git push -u origin <branch>` 및 `gh pr create`를 실행하여 지속적 통합(CI)과 리뷰가 진행되도록 합니다.
