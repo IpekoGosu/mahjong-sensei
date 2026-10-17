@@ -68,7 +68,7 @@ model RoundMetric {
     id             String @id @default(cuid())
     roundId        String
     seat           Int
-    startShanten   Int
+    startShanten   Float
     startDoraCount Int
     drawLuckRatio  Float
     uradoraHits    Int
