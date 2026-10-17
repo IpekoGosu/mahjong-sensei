@@ -8,9 +8,12 @@ const YAOJUU_INDICES: readonly number[] = [
 ]
 
 export class ShantenCalculator {
-    public calculate(tiles: readonly string[], is3P: boolean = false): number {
+    public calculate(tiles: readonly string[], is3P: boolean = false, meldCount: number = 0): number {
         const counts = TileConverter.handToCountArray(tiles)
-        const regular = this.calculateRegular(counts, is3P)
+        const regular = this.calculateRegular(counts, is3P, meldCount)
+        if (meldCount > 0) {
+            return regular
+        }
         const chitoi = this.calculateChitoitsu(counts, is3P)
         const kokushi = this.calculateKokushi(counts)
 
@@ -59,7 +62,7 @@ export class ShantenCalculator {
         return 13 - uniqueYaojuu - (hasYaojuuPair ? 1 : 0)
     }
 
-    public calculateRegular(counts: readonly number[], is3P: boolean = false): number {
+    public calculateRegular(counts: readonly number[], is3P: boolean = false, meldCount: number = 0): number {
         /*_ GEMINI THINKING _*/
         const countsCopy = [...counts]
         const state = { bestShanten: 8 }
@@ -73,13 +76,13 @@ export class ShantenCalculator {
             const count = countsCopy[i] ?? 0
             if (count >= 2) {
                 countsCopy[i] = count - 2
-                this.searchMelds(countsCopy, 0, 1, 0, state, is3P)
+                this.searchMelds(countsCopy, 0, 1, 0, state, is3P, meldCount)
                 countsCopy[i] = count
             }
         }
 
         // Try without a pair
-        this.searchMelds(countsCopy, 0, 0, 0, state, is3P)
+        this.searchMelds(countsCopy, 0, 0, 0, state, is3P, meldCount)
 
         return state.bestShanten
     }
@@ -90,7 +93,8 @@ export class ShantenCalculator {
         pairs: number,
         melds: number,
         state: { bestShanten: number },
-        is3P: boolean = false
+        is3P: boolean = false,
+        meldCount: number = 0
     ): void {
         /*_ GEMINI THINKING _*/
         // Skip tiles with 0 count
@@ -101,11 +105,12 @@ export class ShantenCalculator {
         if (index >= TILE_COUNT) {
             // Count remaining partial melds (taatsu)
             const partials = this.countPartials(counts, is3P)
-            let totalMelds = melds + partials
+            const effectiveMelds = Math.min(4, melds + meldCount)
+            let totalMelds = effectiveMelds + partials
             if (totalMelds > 4) {
                 totalMelds = 4
             }
-            const currentShanten = 8 - (melds * 2) - (totalMelds - melds) - pairs
+            const currentShanten = 8 - (effectiveMelds * 2) - (totalMelds - effectiveMelds) - pairs
             if (currentShanten < state.bestShanten) {
                 state.bestShanten = currentShanten
             }
@@ -118,7 +123,7 @@ export class ShantenCalculator {
         const canFormTriplet = !is3P || !(index >= 1 && index <= 7)
         if (canFormTriplet && count >= 3) {
             counts[index] = count - 3
-            this.searchMelds(counts, index, pairs, melds + 1, state, is3P)
+            this.searchMelds(counts, index, pairs, melds + 1, state, is3P, meldCount)
             counts[index] = count
         }
 
@@ -132,7 +137,7 @@ export class ShantenCalculator {
                 counts[index] = count - 1
                 counts[index + 1] = next1 - 1
                 counts[index + 2] = next2 - 1
-                this.searchMelds(counts, index, pairs, melds + 1, state, is3P)
+                this.searchMelds(counts, index, pairs, melds + 1, state, is3P, meldCount)
                 counts[index] = count
                 counts[index + 1] = next1
                 counts[index + 2] = next2
@@ -140,7 +145,7 @@ export class ShantenCalculator {
         }
 
         // 3. Skip current tile without forming a full meld
-        this.searchMelds(counts, index + 1, pairs, melds, state, is3P)
+        this.searchMelds(counts, index + 1, pairs, melds, state, is3P, meldCount)
     }
 
     private countPartials(counts: readonly number[], is3P: boolean = false): number {
