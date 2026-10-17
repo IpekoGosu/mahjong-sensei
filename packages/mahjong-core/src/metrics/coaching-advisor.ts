@@ -55,9 +55,9 @@ export interface MistakeFeedbackParams {
 }
 
 interface DiscardCandidate {
-    tile: string
-    shanten: number
-    ukeire: number
+    readonly tile: string
+    readonly shanten: number
+    readonly ukeire: number
 }
 
 export class CoachingAdvisor {
@@ -139,6 +139,8 @@ export class CoachingAdvisor {
         let seenDoraCount = 0
         let lastDiscardedTile: string | null = null
         let targetTurnNumber = 0
+        let targetMeldCount = 0
+        let isTargetInRiichi = false
 
         if (round.header.dora) {
             this.addVisibleTile(round.header.dora, visibleCounts)
@@ -188,164 +190,175 @@ export class CoachingAdvisor {
                     }
                 } else {
                     targetTurnNumber++
-                    const prevShanten = this.shantenCalc.calculate(currentHand, is3P)
 
-                    const handAfterDiscard = [...currentHand]
-                    const removeIdx = handAfterDiscard.indexOf(action.tile)
-                    if (removeIdx !== -1) {
-                        handAfterDiscard.splice(removeIdx, 1)
-                    } else {
-                        const altIdx = handAfterDiscard.findIndex((t) => this.normalizeTile(t) === normDiscard)
-                        if (altIdx !== -1) {
-                            handAfterDiscard.splice(altIdx, 1)
+                    if (!isTargetInRiichi) {
+                        const prevShanten = this.shantenCalc.calculate(currentHand, is3P, targetMeldCount)
+
+                        const handAfterDiscard = [...currentHand]
+                        const removeIdx = handAfterDiscard.indexOf(action.tile)
+                        if (removeIdx !== -1) {
+                            handAfterDiscard.splice(removeIdx, 1)
+                        } else {
+                            const altIdx = handAfterDiscard.findIndex((t) => this.normalizeTile(t) === normDiscard)
+                            if (altIdx !== -1) {
+                                handAfterDiscard.splice(altIdx, 1)
+                            }
                         }
-                    }
 
-                    const afterShanten = this.shantenCalc.calculate(handAfterDiscard, is3P)
-                    const actualUkeire = this.calculateUkeire(handAfterDiscard, visibleCounts, is3P)
+                        const afterShanten = this.shantenCalc.calculate(handAfterDiscard, is3P, targetMeldCount)
+                        const actualUkeire = this.calculateUkeire(handAfterDiscard, visibleCounts, is3P, targetMeldCount)
 
-                    let didDealIn = false
-                    let dealInPoints = 0
-                    if (aIdx + 1 < actions.length) {
-                        const nextAction = actions[aIdx + 1]
-                        if (nextAction && nextAction.type === 'RecordHule') {
-                            for (const h of nextAction.hules) {
-                                const delta = h.deltaScores[targetSeat] ?? 0
-                                const isTsumo = this.isTsumoWin(h.deltaScores, h.seat)
-                                if (h.seat !== targetSeat && delta < 0 && !isTsumo) {
-                                    didDealIn = true
-                                    dealInPoints = Math.max(dealInPoints, Math.abs(delta))
+                        let didDealIn = false
+                        let dealInPoints = 0
+                        if (aIdx + 1 < actions.length) {
+                            const nextAction = actions[aIdx + 1]
+                            if (nextAction && nextAction.type === 'RecordHule') {
+                                for (const h of nextAction.hules) {
+                                    const delta = h.deltaScores[targetSeat] ?? 0
+                                    const isTsumo = this.isTsumoWin(h.deltaScores, h.seat)
+                                    if (h.seat !== targetSeat && delta < 0 && !isTsumo) {
+                                        didDealIn = true
+                                        dealInPoints = Math.max(dealInPoints, Math.abs(delta))
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    const discardSafety = this.calculateDiscardSafety(
-                        action.tile,
-                        activeRiichiSeats,
-                        opponentSafeTiles,
-                        visibleCounts,
-                        currentHand
-                    )
+                        const discardSafety = this.calculateDiscardSafety(
+                            action.tile,
+                            activeRiichiSeats,
+                            opponentSafeTiles,
+                            visibleCounts,
+                            currentHand
+                        )
 
-                    let safestTileInHand: string | null = null
-                    let maxSafetyInHand = -1
-                    let bestSafeShanten = 999
-                    let bestSafeUkeire = -1
+                        let safestTileInHand: string | null = null
+                        let maxSafetyInHand = -1
+                        let bestSafeShanten = 999
+                        let bestSafeUkeire = -1
 
-                    if (activeRiichiSeats.size > 0) {
-                        for (const t of currentHand) {
-                            const s = this.calculateDiscardSafety(
-                                t,
-                                activeRiichiSeats,
-                                opponentSafeTiles,
-                                visibleCounts,
-                                currentHand
-                            )
-                            const cHand = [...currentHand]
-                            const rIdx = cHand.indexOf(t)
-                            if (rIdx !== -1) {
-                                cHand.splice(rIdx, 1)
-                            }
-                            const shanten = this.shantenCalc.calculate(cHand, is3P)
-                            const ukeire = this.calculateUkeire(cHand, visibleCounts, is3P)
+                        if (activeRiichiSeats.size > 0) {
+                            for (const t of currentHand) {
+                                const s = this.calculateDiscardSafety(
+                                    t,
+                                    activeRiichiSeats,
+                                    opponentSafeTiles,
+                                    visibleCounts,
+                                    currentHand
+                                )
+                                const cHand = [...currentHand]
+                                const rIdx = cHand.indexOf(t)
+                                if (rIdx !== -1) {
+                                    cHand.splice(rIdx, 1)
+                                }
+                                const shanten = this.shantenCalc.calculate(cHand, is3P, targetMeldCount)
+                                const ukeire = this.calculateUkeire(cHand, visibleCounts, is3P, targetMeldCount)
 
-                            if (s > maxSafetyInHand) {
-                                maxSafetyInHand = s
-                                safestTileInHand = t
-                                bestSafeShanten = shanten
-                                bestSafeUkeire = ukeire
-                            } else if (s === maxSafetyInHand && s >= 0.85) {
-                                if (shanten < bestSafeShanten || (shanten === bestSafeShanten && ukeire > bestSafeUkeire)) {
+                                if (s > maxSafetyInHand) {
+                                    maxSafetyInHand = s
                                     safestTileInHand = t
                                     bestSafeShanten = shanten
                                     bestSafeUkeire = ukeire
+                                } else if (s === maxSafetyInHand && s >= 0.85) {
+                                    if (shanten < bestSafeShanten || (shanten === bestSafeShanten && ukeire > bestSafeUkeire)) {
+                                        safestTileInHand = t
+                                        bestSafeShanten = shanten
+                                        bestSafeUkeire = ukeire
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    const combinedSafeTiles = new Set<string>()
-                    if (activeRiichiSeats.size > 0) {
-                        for (const t of currentHand) {
-                            const s = this.calculateDiscardSafety(
-                                t,
-                                activeRiichiSeats,
-                                opponentSafeTiles,
-                                visibleCounts,
-                                currentHand
-                            )
-                            if (s >= 0.85) {
-                                combinedSafeTiles.add(this.normalizeTile(t))
+                        const combinedSafeTiles = new Set<string>()
+                        if (activeRiichiSeats.size > 0) {
+                            for (const t of currentHand) {
+                                const s = this.calculateDiscardSafety(
+                                    t,
+                                    activeRiichiSeats,
+                                    opponentSafeTiles,
+                                    visibleCounts,
+                                    currentHand
+                                )
+                                if (s >= 0.85) {
+                                    combinedSafeTiles.add(this.normalizeTile(t))
+                                }
                             }
                         }
-                    }
 
-                    const optimalResult = this.findOptimalDiscard(
-                        currentHand,
-                        visibleCounts,
-                        is3P,
-                        activeRiichiSeats.size > 0 && prevShanten >= 1 ? combinedSafeTiles : undefined
-                    )
+                        const optimalResult = this.findOptimalDiscard(
+                            currentHand,
+                            visibleCounts,
+                            is3P,
+                            activeRiichiSeats.size > 0 && prevShanten >= 1 ? combinedSafeTiles : undefined,
+                            targetMeldCount
+                        )
 
-                    let mistakeCategory: MistakeCategory | null = null
-                    let severityScore = 0
-                    let chosenOptimalTile = optimalResult.tile
+                        let mistakeCategory: MistakeCategory | null = null
+                        let severityScore = 0
+                        let chosenOptimalTile = optimalResult.tile
+                        let chosenOptimalUkeire = optimalResult.ukeire
 
-                    if (didDealIn) {
-                        mistakeCategory = 'RECKLESS_PUSH_DEAL_IN'
-                        severityScore = Math.min(100, Math.max(85, Math.round(85 + (dealInPoints / 1000))))
-                        if (safestTileInHand && maxSafetyInHand >= 0.85) {
+                        if (
+                            didDealIn &&
+                            activeRiichiSeats.size > 0 &&
+                            prevShanten >= 1 &&
+                            safestTileInHand !== null &&
+                            maxSafetyInHand >= 0.85
+                        ) {
+                            mistakeCategory = 'RECKLESS_PUSH_DEAL_IN'
+                            severityScore = Math.min(100, Math.max(85, Math.round(85 + (dealInPoints / 1000))))
                             chosenOptimalTile = safestTileInHand
+                            chosenOptimalUkeire = bestSafeUkeire
+                        } else if (
+                            activeRiichiSeats.size > 0 &&
+                            prevShanten >= 1 &&
+                            discardSafety <= 0.50 &&
+                            safestTileInHand !== null &&
+                            maxSafetyInHand >= 0.85
+                        ) {
+                            mistakeCategory = 'DANGEROUS_MUSUJI_PUSH'
+                            severityScore = Math.min(90, Math.max(70, Math.round(70 + (prevShanten * 5) + ((1.0 - discardSafety) * 15))))
+                            chosenOptimalTile = safestTileInHand
+                            chosenOptimalUkeire = bestSafeUkeire
+                        } else if (afterShanten > prevShanten && optimalResult.shanten <= prevShanten) {
+                            mistakeCategory = 'SHANTEN_RETREAT'
+                            severityScore = Math.min(85, Math.max(50, 75 - (Math.min(2, prevShanten) * 10)))
+                        } else if (
+                            afterShanten === prevShanten &&
+                            (optimalResult.ukeire - actualUkeire) >= 4 &&
+                            this.normalizeTile(action.tile) !== this.normalizeTile(optimalResult.tile)
+                        ) {
+                            mistakeCategory = 'UKEIRE_LOSS'
+                            severityScore = Math.min(70, Math.max(25, Math.round(30 + ((optimalResult.ukeire - actualUkeire) * 2.5))))
                         }
-                    } else if (
-                        activeRiichiSeats.size > 0 &&
-                        prevShanten >= 1 &&
-                        discardSafety <= 0.50 &&
-                        safestTileInHand &&
-                        maxSafetyInHand >= 0.85
-                    ) {
-                        mistakeCategory = 'DANGEROUS_MUSUJI_PUSH'
-                        severityScore = Math.min(90, Math.max(70, Math.round(70 + (prevShanten * 5) + ((1.0 - discardSafety) * 15))))
-                        chosenOptimalTile = safestTileInHand
-                    } else if (afterShanten > prevShanten && optimalResult.shanten <= prevShanten) {
-                        mistakeCategory = 'SHANTEN_RETREAT'
-                        severityScore = Math.min(85, Math.max(50, 75 - (Math.min(2, prevShanten) * 10)))
-                    } else if (
-                        afterShanten === prevShanten &&
-                        (optimalResult.ukeire - actualUkeire) >= 4 &&
-                        this.normalizeTile(action.tile) !== this.normalizeTile(optimalResult.tile)
-                    ) {
-                        mistakeCategory = 'UKEIRE_LOSS'
-                        severityScore = Math.min(70, Math.max(25, Math.round(30 + ((optimalResult.ukeire - actualUkeire) * 2.5))))
-                    }
 
-                    if (mistakeCategory !== null) {
-                        const coachingMessageKo = this.buildMistakeFeedback({
-                            category: mistakeCategory,
-                            turnNumber: targetTurnNumber,
-                            discardedTile: action.tile,
-                            optimalTile: chosenOptimalTile,
-                            prevShanten,
-                            afterShanten,
-                            optimalUkeire: optimalResult.ukeire,
-                            actualUkeire,
-                            roundIndex
-                        })
+                        if (mistakeCategory !== null) {
+                            const coachingMessageKo = this.buildMistakeFeedback({
+                                category: mistakeCategory,
+                                turnNumber: targetTurnNumber,
+                                discardedTile: action.tile,
+                                optimalTile: chosenOptimalTile,
+                                prevShanten,
+                                afterShanten,
+                                optimalUkeire: chosenOptimalUkeire,
+                                actualUkeire,
+                                roundIndex
+                            })
 
-                        mistakes.push({
-                            roundIndex,
-                            turnNumber: targetTurnNumber,
-                            discardedTile: action.tile,
-                            optimalTile: chosenOptimalTile,
-                            prevShanten,
-                            afterShanten,
-                            optimalUkeire: optimalResult.ukeire,
-                            actualUkeire,
-                            mistakeCategory,
-                            severityScore,
-                            coachingMessageKo
-                        })
+                            mistakes.push({
+                                roundIndex,
+                                turnNumber: targetTurnNumber,
+                                discardedTile: action.tile,
+                                optimalTile: chosenOptimalTile,
+                                prevShanten,
+                                afterShanten,
+                                optimalUkeire: chosenOptimalUkeire,
+                                actualUkeire,
+                                mistakeCategory,
+                                severityScore,
+                                coachingMessageKo
+                            })
+                        }
                     }
 
                     const curIdx = currentHand.indexOf(action.tile)
@@ -356,6 +369,10 @@ export class CoachingAdvisor {
                         if (altIdx !== -1) {
                             currentHand.splice(altIdx, 1)
                         }
+                    }
+
+                    if (action.isLiqi) {
+                        isTargetInRiichi = true
                     }
 
                     this.addVisibleTile(action.tile, visibleCounts)
@@ -385,6 +402,7 @@ export class CoachingAdvisor {
                 }
 
                 if (action.seat === targetSeat) {
+                    targetMeldCount++
                     for (const tile of handTilesToRemove) {
                         let idx = currentHand.indexOf(tile)
                         if (idx === -1) {
@@ -394,6 +412,7 @@ export class CoachingAdvisor {
                         if (idx !== -1) {
                             currentHand.splice(idx, 1)
                         }
+                        this.addVisibleTile(tile, visibleCounts)
                     }
                 }
             } else if (action.type === 'RecordAnGangAddGang') {
@@ -410,19 +429,30 @@ export class CoachingAdvisor {
                     }
                 } else {
                     if (action.gangType === 'ankan') {
+                        targetMeldCount++
                         for (const tile of action.tiles) {
-                            const idx = currentHand.indexOf(tile)
+                            let idx = currentHand.indexOf(tile)
+                            if (idx === -1) {
+                                const norm = this.normalizeTile(tile)
+                                idx = currentHand.findIndex((h) => this.normalizeTile(h) === norm)
+                            }
                             if (idx !== -1) {
                                 currentHand.splice(idx, 1)
                             }
+                            this.addVisibleTile(tile, visibleCounts)
                         }
                     } else if (action.tiles.length > 0) {
                         const addedTile = action.tiles[0]
                         if (addedTile) {
-                            const idx = currentHand.indexOf(addedTile)
+                            let idx = currentHand.indexOf(addedTile)
+                            if (idx === -1) {
+                                const norm = this.normalizeTile(addedTile)
+                                idx = currentHand.findIndex((h) => this.normalizeTile(h) === norm)
+                            }
                             if (idx !== -1) {
                                 currentHand.splice(idx, 1)
                             }
+                            this.addVisibleTile(addedTile, visibleCounts)
                         }
                     }
                 }
@@ -432,9 +462,6 @@ export class CoachingAdvisor {
                     const idx = currentHand.indexOf('4z')
                     if (idx !== -1) {
                         currentHand.splice(idx, 1)
-                    }
-                    if (currentHand.length >= 13) {
-                        this.shantenCalc.calculate(currentHand, is3P)
                     }
                 }
             }
@@ -448,9 +475,10 @@ export class CoachingAdvisor {
     protected calculateUkeire(
         hand: readonly string[],
         visibleCounts: ReadonlyMap<string, number>,
-        is3P: boolean
+        is3P: boolean,
+        meldCount: number = 0
     ): number {
-        const currentShanten = this.shantenCalc.calculate(hand, is3P)
+        const currentShanten = this.shantenCalc.calculate(hand, is3P, meldCount)
         if (currentShanten === -1) {
             return 0
         }
@@ -473,7 +501,7 @@ export class CoachingAdvisor {
                 continue
             }
 
-            const nextShanten = this.shantenCalc.calculate([...hand, tile], is3P)
+            const nextShanten = this.shantenCalc.calculate([...hand, tile], is3P, meldCount)
             if (nextShanten < currentShanten) {
                 totalUkeire += remaining
             }
@@ -487,7 +515,8 @@ export class CoachingAdvisor {
         hand: readonly string[],
         visibleCounts: ReadonlyMap<string, number>,
         is3P: boolean,
-        safeTiles?: ReadonlySet<string>
+        safeTiles?: ReadonlySet<string>,
+        meldCount: number = 0
     ): OptimalDiscardResult {
         if (hand.length === 0) {
             return { tile: '', shanten: 8, ukeire: 0 }
@@ -511,8 +540,8 @@ export class CoachingAdvisor {
             if (removeIdx !== -1) {
                 candidateHand.splice(removeIdx, 1)
             }
-            const shanten = this.shantenCalc.calculate(candidateHand, is3P)
-            const ukeire = this.calculateUkeire(candidateHand, visibleCounts, is3P)
+            const shanten = this.shantenCalc.calculate(candidateHand, is3P, meldCount)
+            const ukeire = this.calculateUkeire(candidateHand, visibleCounts, is3P, meldCount)
             candidates.push({ tile: candidateTile, shanten, ukeire })
         }
 
