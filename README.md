@@ -87,9 +87,8 @@ mahjong-sensei/
 │       └── src/app/             # 10/30/50판 윈도우, KPI 요약 카드, 산점도, 트렌드 차트
 ├── packages/
 │   ├── mahjong-core/            # 순수 TS 마작 도메인 핵심 엔진
-│   │   ├── src/metrics/         # 샹텐수, 운/실력 점수, Kawa 수비, AI 랭크, 스타일 진단
-│   │   ├── src/parser/          # PaipuParser, LiqiBinaryDecoder (Protobuf/XOR)
-│   │   └── src/coaching/        # CoachingAdvisor (Top 3 치명적 타패 분석)
+│   │   ├── src/metrics/         # 샹텐수, 운/실력 점수, Kawa 수비, AI 랭크, 스타일 진단, AI 코칭
+│   │   └── src/parser/          # PaipuParser, LiqiBinaryDecoder (Protobuf/XOR)
 │   └── types/                   # 도메인 모델, 지표, 패보 공통 타입 인터페이스
 ├── docker/                      # 컨테이너 멀티스테이지 Dockerfile
 ├── docs/                        # 시스템 아키텍처, 코딩 컨벤션, 마작 도메인 헌법
@@ -140,7 +139,7 @@ pnpm build
 
 ## 📏 엔지니어링 및 코딩 컨벤션 (Code Conventions)
 
-프로젝트의 모든 코드는 [`AGENTS.md`](file:///Users/kimshiwoo/projects/mahjong-sensei/AGENTS.md) 및 [`docs/coding-conventions.md`](file:///Users/kimshiwoo/projects/mahjong-sensei/docs/coding-conventions.md)의 엄격한 원칙을 준수합니다:
+프로젝트의 모든 코드는 [`AGENTS.md`](AGENTS.md) 및 [`docs/coding-conventions.md`](docs/coding-conventions.md)의 엄격한 원칙을 준수합니다:
 
 1. **포맷팅**: 공백 4칸 들여쓰기, 세미콜론(`;`) 사용 금지, 엄격한 동등 비교(`===`, `!==`).
 2. **타입 안전성**: `any`, `unknown`, `as unknown as` 이중 단언 일체 배제.
