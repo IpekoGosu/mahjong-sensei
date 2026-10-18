@@ -25,9 +25,51 @@ class MockCoachingAdvisor extends CoachingAdvisor {
         visibleCounts: ReadonlyMap<string, number>,
         is3P: boolean,
         safeTiles?: ReadonlySet<string>,
-        meldCount: number = 0
+        meldCount: number = 0,
+        doraIndicators: readonly string[] = [],
+        turnNumber: number = 1,
+        roundWind?: string,
+        seatWind?: string
     ): OptimalDiscardResult {
-        return this.findOptimalDiscard(hand, visibleCounts, is3P, safeTiles, meldCount)
+        return this.findOptimalDiscard(
+            hand,
+            visibleCounts,
+            is3P,
+            safeTiles,
+            meldCount,
+            doraIndicators,
+            turnNumber,
+            roundWind,
+            seatWind
+        )
+    }
+
+    public testGetTileDoraValue(
+        tile: string,
+        doraIndicators: readonly string[],
+        is3P: boolean
+    ): number {
+        return this.getTileDoraValue(tile, doraIndicators, is3P)
+    }
+
+    public testGetDiscardPreference(
+        tile: string,
+        hand: readonly string[],
+        is3P: boolean,
+        roundWind?: string,
+        seatWind?: string,
+        turnNumber: number = 1
+    ): number {
+        return this.getDiscardPreference(tile, hand, is3P, roundWind, seatWind, turnNumber)
+    }
+
+    public testSyncRevealedDoras(
+        doras: readonly string[] | undefined,
+        doraIndicators: string[],
+        visibleCounts: Map<string, number>,
+        seenDoraCount: number
+    ): number {
+        return this.syncRevealedDoras(doras, doraIndicators, visibleCounts, seenDoraCount)
     }
 
     public testBuildMistakeFeedback(
@@ -821,3 +863,297 @@ test('CoachingAdvisor - analyzeRound: defensive optimalUkeire consistency with c
 
     assert.strictEqual(mistake.optimalUkeire, expectedUkeire1z)
 })
+
+test('MockCoachingAdvisor - findOptimalDiscard: red dora preservation (0p vs 5p)', () => {
+    const advisor = new MockCoachingAdvisor()
+    const emptyVisible = new Map<string, number>()
+
+    // Hand: 123m 456m 789m 11z 4p 0p 5p
+    // Removing 5p leaves: 123m 456m 789m 11z 4p 0p (tenpai waiting on 3p, 6p with red dora 0p)
+    // Removing 0p leaves: 123m 456m 789m 11z 4p 5p (tenpai waiting on 3p, 6p without red dora)
+    // Both 5p and 0p give shanten = 0, ukeire = 8.
+    // 0p is red dora (doraValue = 1), 5p is normal (doraValue = 0).
+    // advisor must choose 5p to preserve red dora 0p, even if 0p is placed first in array.
+    const handWithRedDoraFirst = [
+        '1m', '2m', '3m',
+        '4m', '5m', '6m',
+        '7m', '8m', '9m',
+        '1z', '1z',
+        '0p', '5p', '4p'
+    ]
+
+    const optimal = advisor.testFindOptimalDiscard(handWithRedDoraFirst, emptyVisible, false)
+    assert.strictEqual(optimal.tile, '5p')
+    assert.strictEqual(optimal.shanten, 0)
+    assert.strictEqual(optimal.ukeire, 8)
+})
+
+test('MockCoachingAdvisor - findOptimalDiscard: regular dora indicator preservation', () => {
+    const advisor = new MockCoachingAdvisor()
+    const emptyVisible = new Map<string, number>()
+
+    // Hand: 123m 456m 789s 111z + isolated 2p (dora, indicator 1p) + isolated 3s (non-dora)
+    // Discarding 2p leaves tenpai waiting on 3s (tanki, ukeire = 3).
+    // Discarding 3s leaves tenpai waiting on 2p (tanki, ukeire = 3).
+    // Indicator is 1p -> 2p is dora (doraValue = 1). 3s is non-dora (doraValue = 0).
+    // advisor must choose non-dora 3s to preserve dora 2p.
+    const hand = [
+        '1m', '2m', '3m',
+        '4m', '5m', '6m',
+        '7s', '8s', '9s',
+        '1z', '1z', '1z',
+        '2p', '3s'
+    ]
+
+    const optimal = advisor.testFindOptimalDiscard(
+        hand,
+        emptyVisible,
+        false,
+        undefined,
+        0,
+        ['1p']
+    )
+    assert.strictEqual(optimal.tile, '3s')
+})
+
+test('MockCoachingAdvisor - findOptimalDiscard: double dora preservation (red + indicator dora)', () => {
+    const advisor = new MockCoachingAdvisor()
+    const emptyVisible = new Map<string, number>()
+
+    // Indicator is 4s -> 5s is dora.
+    // Hand has 0s (red 5s: 1 red + 1 indicator = 2 doras) and 5s (1 indicator dora = 1 dora).
+    // Hand: 123m 456m 789m 11z 4s 0s 5s
+    // Both 0s and 5s have same shanten & ukeire.
+    // 5s has 1 dora, 0s has 2 doras.
+    // advisor must discard 5s, preserving double dora 0s.
+    const hand = [
+        '1m', '2m', '3m',
+        '4m', '5m', '6m',
+        '7m', '8m', '9m',
+        '1z', '1z',
+        '4s', '0s', '5s'
+    ]
+
+    const optimal = advisor.testFindOptimalDiscard(
+        hand,
+        emptyVisible,
+        false,
+        undefined,
+        0,
+        ['4s']
+    )
+    assert.strictEqual(optimal.tile, '5s')
+})
+
+test('MockCoachingAdvisor - findOptimalDiscard: early-game isolated guest wind vs middle tile heuristic', () => {
+    const advisor = new MockCoachingAdvisor()
+    const emptyVisible = new Map<string, number>()
+
+    // Hand: 123m 456m 789p 111s (4 blocks) + isolated 3z (West wind) + isolated 5s (middle tile)
+    // In East round, seat 0 (East): 3z is guest wind (otakaze).
+    // Discarding 3z leaves tenpai tanki on 5s (ukeire = 3).
+    // Discarding 5s leaves tenpai tanki on 3z (ukeire = 3).
+    // advisor must discard isolated guest wind 3z and keep middle tile 5s.
+    const hand = [
+        '1m', '2m', '3m',
+        '4m', '5m', '6m',
+        '7p', '8p', '9p',
+        '1s', '1s', '1s',
+        '3z', '5s'
+    ]
+
+    const optimal = advisor.testFindOptimalDiscard(
+        hand,
+        emptyVisible,
+        false,
+        undefined,
+        0,
+        [],
+        1,
+        '1z',
+        '1z'
+    )
+    assert.strictEqual(optimal.tile, '3z')
+})
+
+test('MockCoachingAdvisor - findOptimalDiscard: isolated terminal (1/9) vs middle tile heuristic', () => {
+    const advisor = new MockCoachingAdvisor()
+    const emptyVisible = new Map<string, number>()
+
+    // Hand: 123m 456m 789p 111s + isolated 9m (terminal) + isolated 4s (middle tile)
+    // Discarding 9m leaves tenpai tanki on 4s (ukeire = 3).
+    // Discarding 4s leaves tenpai tanki on 9m (ukeire = 3).
+    // advisor must discard terminal 9m and keep middle tile 4s.
+    const hand = [
+        '1m', '2m', '3m',
+        '4m', '5m', '6m',
+        '7p', '8p', '9p',
+        '1s', '1s', '1s',
+        '9m', '4s'
+    ]
+
+    const optimal = advisor.testFindOptimalDiscard(hand, emptyVisible, false)
+    assert.strictEqual(optimal.tile, '9m')
+})
+
+test('MockCoachingAdvisor - findOptimalDiscard: isolated guest wind vs isolated dragon heuristic', () => {
+    const advisor = new MockCoachingAdvisor()
+    const emptyVisible = new Map<string, number>()
+
+    // Hand: 123m 456m 789p 111s + isolated 2z (South, guest in East round) + isolated 7z (Chun dragon)
+    // Discarding 2z leaves tenpai tanki on 7z.
+    // Discarding 7z leaves tenpai tanki on 2z.
+    // In East round with East seat: 2z is guest wind (preference 100), 7z is dragon (preference 90).
+    // advisor must discard guest wind 2z before dragon 7z.
+    const hand = [
+        '1m', '2m', '3m',
+        '4m', '5m', '6m',
+        '7p', '8p', '9p',
+        '1s', '1s', '1s',
+        '2z', '7z'
+    ]
+
+    const optimal = advisor.testFindOptimalDiscard(
+        hand,
+        emptyVisible,
+        false,
+        undefined,
+        0,
+        [],
+        2,
+        '1z',
+        '1z'
+    )
+    assert.strictEqual(optimal.tile, '2z')
+})
+
+test('MockCoachingAdvisor - findOptimalDiscard: 3P (Sanma) dora indicator 1m preserves 9m dora', () => {
+    const advisor = new MockCoachingAdvisor()
+    const emptyVisible = new Map<string, number>()
+
+    // 3P mode: indicator 1m makes 9m dora.
+    // Hand has 9m (dora) and 1s (non-dora).
+    // Both give same shanten & ukeire.
+    // advisor must choose non-dora 1s and preserve 9m dora.
+    const hand = [
+        '1p', '2p', '3p',
+        '4p', '5p', '6p',
+        '7s', '8s', '9s',
+        '1z', '1z', '1z',
+        '9m', '1s'
+    ]
+
+    const optimal = advisor.testFindOptimalDiscard(
+        hand,
+        emptyVisible,
+        true,
+        undefined,
+        0,
+        ['1m']
+    )
+    assert.strictEqual(optimal.tile, '1s')
+})
+
+test('MockCoachingAdvisor - getDiscardPreference: hierarchy verification', () => {
+    const advisor = new MockCoachingAdvisor()
+    const hand = ['1z', '5z', '1m', '2m', '5m', '9p', '5s', '5s']
+
+    // Isolated guest wind (1z with roundWind='2z', seatWind='3z') -> 100 in early game
+    const guestWindPref = advisor.testGetDiscardPreference('1z', hand, false, '2z', '3z', 1)
+    // Isolated dragon (5z) -> 92 in early game
+    const dragonPref = advisor.testGetDiscardPreference('5z', hand, false, '2z', '3z', 1)
+    // Isolated terminal (9p) -> 84 in early game
+    const terminalPref = advisor.testGetDiscardPreference('9p', hand, false, '2z', '3z', 1)
+    // 5s is part of pair -> lower preference
+    const pairPref = advisor.testGetDiscardPreference('5s', hand, false, '2z', '3z', 1)
+
+    assert.ok(guestWindPref > dragonPref)
+    assert.ok(dragonPref > terminalPref)
+    assert.ok(terminalPref > pairPref)
+})
+
+test('CoachingAdvisor - analyzeRound: optimal discard correctly prioritizes non-dora in full round', () => {
+    const advisor = new CoachingAdvisor()
+
+    // Round where dora is 1m (dora is 2m).
+    // Seat 0 holds 123p 456p 789s 111z (4 completed sets) + 2m (dora) + 3s (non-dora).
+    // Both 2m and 3s yield 0-shanten tenpai tanki with ukeire = 3.
+    // Seat 0 discards non-dora 3s.
+    // Discarding 3s was the optimal choice preserving dora 2m, so no mistake flagged.
+    const roundRecord: MajsoulRoundRecord = {
+        header: {
+            type: 'RecordNewRound',
+            chang: 0,
+            ju: 0,
+            ben: 0,
+            liqi: 0,
+            scores: [25000, 25000, 25000, 25000],
+            dora: '1m',
+            hands: [
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7s', '8s', '9s', '1z', '1z', '1z', '2m'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s']
+            ]
+        },
+        actions: [
+            { type: 'RecordDealTile', seat: 0, tile: '3s' },
+            { type: 'RecordDiscardTile', seat: 0, tile: '3s', isMoqie: false, isLiqi: false },
+            { type: 'RecordNoTile', tenpaiSeats: [0], deltaScores: [0, 0, 0, 0] }
+        ]
+    }
+
+    const mistakes = advisor.analyzeRound(roundRecord, 0, 0, false)
+    assert.strictEqual(mistakes.length, 0)
+})
+
+test('MockCoachingAdvisor - 3P (Sanma) Kita North (4z) is preserved as dora and preferred over middle tiles', () => {
+    const advisor = new MockCoachingAdvisor()
+    const hand = ['1p', '2p', '3p', '4p', '5p', '6p', '7s', '8s', '9s', '1s', '2s', '4z', '5s']
+
+    // 4z in 3P has dora value 1 (Kita dora)
+    const doraVal4z = advisor.testGetTileDoraValue('4z', ['1m'], true)
+    assert.strictEqual(doraVal4z, 1)
+
+    // 4z in 4P has dora value 0 (normal guest wind)
+    const doraVal4z4P = advisor.testGetTileDoraValue('4z', ['1m'], false)
+    assert.strictEqual(doraVal4z4P, 0)
+
+    // In 3P, isolated 4z has lower discard preference (25) than isolated middle simple tiles (40+)
+    const pref4z3P = advisor.testGetDiscardPreference('4z', hand, true, '1z', '2z', 1)
+    assert.strictEqual(pref4z3P, 25)
+
+    // findOptimalDiscard in 3P chooses to discard isolated 9m rather than Kita 4z when ukeire is equal
+    const optimal3P = advisor.testFindOptimalDiscard(
+        ['1p', '2p', '3p', '4p', '5p', '6p', '7s', '8s', '9s', '1z', '1z', '4z', '9m'],
+        new Map(),
+        true,
+        undefined,
+        0,
+        [],
+        1,
+        '1z',
+        '2z'
+    )
+    // 4z must not be chosen for discard because it is a Kita dora (9m discarded instead)
+    assert.strictEqual(optimal3P.tile, '9m')
+    assert.notStrictEqual(optimal3P.tile, '4z')
+})
+
+test('CoachingAdvisor - syncRevealedDoras handles duplicate kan dora indicators (2-fan dora)', () => {
+    const advisor = new MockCoachingAdvisor()
+    const doraIndicators: string[] = ['1m']
+    const visibleCounts = new Map<string, number>([['1m', 1]])
+
+    // Kan reveals another 1m (identical dora indicator, total 2x 1m)
+    const newSeenCount = advisor.testSyncRevealedDoras(['1m', '1m'], doraIndicators, visibleCounts, 1)
+    assert.strictEqual(newSeenCount, 2)
+    assert.strictEqual(doraIndicators.length, 2)
+    assert.strictEqual(doraIndicators[0], '1m')
+    assert.strictEqual(doraIndicators[1], '1m')
+
+    // 2m has dora value 2 because 1m indicator appears twice!
+    const doraVal2m = advisor.testGetTileDoraValue('2m', doraIndicators, false)
+    assert.strictEqual(doraVal2m, 2)
+})
+

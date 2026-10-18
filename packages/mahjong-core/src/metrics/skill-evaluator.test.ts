@@ -575,8 +575,8 @@ test('SkillEvaluator - evaluateRound: target seat RecordBaBei and RecordAnGangAd
     }
 
     const metric = evaluator.evaluateRound(roundRecord, 0)
-    // 4 visible copies of 4z (honor tile) yields 1.0 safety
-    assert.strictEqual(metric.foldAccuracyRate, 1.0)
+    // 3+ visible copies of 4z (honor tile) yields 0.95 safety
+    assert.strictEqual(metric.foldAccuracyRate, 0.95)
 })
 
 

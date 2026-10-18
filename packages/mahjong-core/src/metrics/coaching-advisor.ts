@@ -10,7 +10,7 @@ import { ShantenCalculator } from '../shanten'
 import { MetricCalculator } from '../metrics'
 import { LuckEvaluator } from './luck-evaluator'
 import { SkillEvaluator } from './skill-evaluator'
-import { TILE_NAMES } from '../tiles'
+import { TILE_NAMES, TileConverter } from '../tiles'
 
 export type { MistakeCategory, CriticalMistakeHighlight, GameCoachingReport }
 
@@ -115,13 +115,23 @@ export class CoachingAdvisor {
         opponentSafeTiles.set(2, new Set<string>())
         opponentSafeTiles.set(3, new Set<string>())
 
+        const doraIndicators: string[] = []
         let seenDoraCount = 0
         let lastDiscardedTile: string | null = null
         let targetTurnNumber = 0
         let targetMeldCount = 0
         let isTargetInRiichi = false
 
+        const chang = round.header.chang ?? 0
+        const roundWind = `${chang + 1}z`
+        const ju = round.header.ju ?? 0
+        const seatWindVal = is3P
+            ? (((targetSeat - (ju % 3)) % 3 + 3) % 3) + 1
+            : (((targetSeat - (ju % 4)) % 4 + 4) % 4) + 1
+        const seatWind = `${seatWindVal}z`
+
         if (round.header.dora) {
+            doraIndicators.push(round.header.dora)
             this.addVisibleTile(round.header.dora, visibleCounts)
         }
 
@@ -135,23 +145,13 @@ export class CoachingAdvisor {
             }
 
             if (action.type === 'RecordDealTile') {
-                if (action.doras && action.doras.length > seenDoraCount) {
-                    for (const dora of action.doras.slice(seenDoraCount)) {
-                        this.addVisibleTile(dora, visibleCounts)
-                    }
-                    seenDoraCount = action.doras.length
-                }
+                seenDoraCount = this.syncRevealedDoras(action.doras, doraIndicators, visibleCounts, seenDoraCount)
 
                 if (action.seat === targetSeat) {
                     currentHand.push(action.tile)
                 }
             } else if (action.type === 'RecordDiscardTile') {
-                if (action.doras && action.doras.length > seenDoraCount) {
-                    for (const dora of action.doras.slice(seenDoraCount)) {
-                        this.addVisibleTile(dora, visibleCounts)
-                    }
-                    seenDoraCount = action.doras.length
-                }
+                seenDoraCount = this.syncRevealedDoras(action.doras, doraIndicators, visibleCounts, seenDoraCount)
 
                 lastDiscardedTile = action.tile
                 const normDiscard = this.normalizeTile(action.tile)
@@ -243,6 +243,18 @@ export class CoachingAdvisor {
                                         safestTileInHand = t
                                         bestSafeShanten = shanten
                                         bestSafeUkeire = ukeire
+                                    } else if (shanten === bestSafeShanten && ukeire === bestSafeUkeire && safestTileInHand !== null) {
+                                        const curDora = this.getTileDoraValue(t, doraIndicators, is3P)
+                                        const prevDora = this.getTileDoraValue(safestTileInHand, doraIndicators, is3P)
+                                        if (curDora < prevDora) {
+                                            safestTileInHand = t
+                                        } else if (curDora === prevDora) {
+                                            const curPref = this.getDiscardPreference(t, currentHand, is3P, roundWind, seatWind, targetTurnNumber)
+                                            const prevPref = this.getDiscardPreference(safestTileInHand, currentHand, is3P, roundWind, seatWind, targetTurnNumber)
+                                            if (curPref > prevPref) {
+                                                safestTileInHand = t
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -269,7 +281,11 @@ export class CoachingAdvisor {
                             visibleCounts,
                             is3P,
                             activeRiichiSeats.size > 0 && prevShanten >= 1 ? combinedSafeTiles : undefined,
-                            targetMeldCount
+                            targetMeldCount,
+                            doraIndicators,
+                            targetTurnNumber,
+                            roundWind,
+                            seatWind
                         )
 
                         let mistakeCategory: MistakeCategory | null = null
@@ -436,13 +452,7 @@ export class CoachingAdvisor {
                     }
                 }
             } else if (action.type === 'RecordBaBei') {
-                if (action.doras && action.doras.length > seenDoraCount) {
-                    for (const dora of action.doras.slice(seenDoraCount)) {
-                        this.addVisibleTile(dora, visibleCounts)
-                    }
-                    seenDoraCount = action.doras.length
-                }
-
+                seenDoraCount = this.syncRevealedDoras(action.doras, doraIndicators, visibleCounts, seenDoraCount)
                 this.addVisibleTile('4z', visibleCounts)
                 if (action.seat === targetSeat) {
                     const idx = currentHand.indexOf('4z')
@@ -502,7 +512,11 @@ export class CoachingAdvisor {
         visibleCounts: ReadonlyMap<string, number>,
         is3P: boolean,
         safeTiles?: ReadonlySet<string>,
-        meldCount: number = 0
+        meldCount: number = 0,
+        doraIndicators: readonly string[] = [],
+        turnNumber: number = 1,
+        roundWind?: string,
+        seatWind?: string
     ): OptimalDiscardResult {
         if (hand.length === 0) {
             return { tile: '', shanten: 8, ukeire: 0 }
@@ -511,9 +525,8 @@ export class CoachingAdvisor {
         const uniqueTiles: string[] = []
         const seen = new Set<string>()
         for (const tile of hand) {
-            const norm = this.normalizeTile(tile)
-            if (!seen.has(norm)) {
-                seen.add(norm)
+            if (!seen.has(tile)) {
+                seen.add(tile)
                 uniqueTiles.push(tile)
             }
         }
@@ -531,15 +544,38 @@ export class CoachingAdvisor {
             candidates.push({ tile: candidateTile, shanten, ukeire })
         }
 
+        const compareCandidates = (a: DiscardCandidate, b: DiscardCandidate): number => {
+            // 1. Shanten minimization
+            if (a.shanten !== b.shanten) {
+                return a.shanten - b.shanten
+            }
+
+            // 2. Ukeire maximization
+            if (a.ukeire !== b.ukeire) {
+                return b.ukeire - a.ukeire
+            }
+
+            // 3. Dora / Aka-dora preservation (discard non-dora first)
+            const aDora = this.getTileDoraValue(a.tile, doraIndicators, is3P)
+            const bDora = this.getTileDoraValue(b.tile, doraIndicators, is3P)
+            if (aDora !== bDora) {
+                return aDora - bDora
+            }
+
+            // 4. Isolated honor / terminal tile discard heuristic (early-game / general tile efficiency)
+            const aPref = this.getDiscardPreference(a.tile, hand, is3P, roundWind, seatWind, turnNumber)
+            const bPref = this.getDiscardPreference(b.tile, hand, is3P, roundWind, seatWind, turnNumber)
+            if (aPref !== bPref) {
+                return bPref - aPref
+            }
+
+            return 0
+        }
+
         if (safeTiles && safeTiles.size > 0) {
             const safeCandidates = candidates.filter((c) => safeTiles.has(this.normalizeTile(c.tile)))
             if (safeCandidates.length > 0) {
-                safeCandidates.sort((a, b) => {
-                    if (a.shanten !== b.shanten) {
-                        return a.shanten - b.shanten
-                    }
-                    return b.ukeire - a.ukeire
-                })
+                safeCandidates.sort(compareCandidates)
                 const bestSafe = safeCandidates[0]
                 if (bestSafe) {
                     return bestSafe
@@ -547,12 +583,7 @@ export class CoachingAdvisor {
             }
         }
 
-        candidates.sort((a, b) => {
-            if (a.shanten !== b.shanten) {
-                return a.shanten - b.shanten
-            }
-            return b.ukeire - a.ukeire
-        })
+        candidates.sort(compareCandidates)
 
         const best = candidates[0]
         if (best) {
@@ -560,6 +591,165 @@ export class CoachingAdvisor {
         }
 
         return { tile: hand[0] ?? '', shanten: 8, ukeire: 0 }
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected syncRevealedDoras(
+        doras: readonly string[] | undefined,
+        doraIndicators: string[],
+        visibleCounts: Map<string, number>,
+        seenDoraCount: number
+    ): number {
+        if (!doras || doras.length <= seenDoraCount) {
+            return seenDoraCount
+        }
+        const newDoras = doras.slice(seenDoraCount)
+        for (const dora of newDoras) {
+            doraIndicators.push(dora)
+            this.addVisibleTile(dora, visibleCounts)
+        }
+        return doras.length
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected getTileDoraValue(
+        tile: string,
+        doraIndicators: readonly string[],
+        is3P: boolean
+    ): number {
+        let value = 0
+        if (TileConverter.isRedDora(tile)) {
+            value += 1
+        }
+        const norm = this.normalizeTile(tile)
+        if (is3P && norm === '4z') {
+            value += 1
+        }
+        for (const indicator of doraIndicators) {
+            const nextDora = TileConverter.getNextDoraTile(indicator, is3P)
+            if (norm === nextDora) {
+                value += 1
+            }
+        }
+        return value
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected getDiscardPreference(
+        tile: string,
+        hand: readonly string[],
+        is3P: boolean,
+        roundWind?: string,
+        seatWind?: string,
+        turnNumber: number = 1
+    ): number {
+        const norm = this.normalizeTile(tile)
+        const countInHand = hand.filter((t) => this.normalizeTile(t) === norm).length
+        const isEarlyGame = turnNumber <= 6
+
+        // If tile forms a pair or triplet in hand, it is not an isolated floating tile
+        if (countInHand > 1) {
+            if (norm.endsWith('z')) {
+                if (is3P && norm === '4z') {
+                    return 20
+                }
+                const isYakuhai = norm === '5z' || norm === '6z' || norm === '7z' ||
+                    norm === roundWind || norm === seatWind
+                return isYakuhai ? 28 : 30
+            }
+            const num = Number.parseInt(norm.slice(0, -1), 10)
+            if (num === 1 || num === 9) {
+                return 25
+            }
+            if (num === 2 || num === 8) {
+                return 20
+            }
+            return 15
+        }
+
+        // countInHand === 1 (single tile in hand)
+        // Check honor tiles (1z..7z)
+        if (norm.endsWith('z')) {
+            // In 3P (Sanma), North (4z) is Kita (拔北) nuki dora and should be preserved
+            if (is3P && norm === '4z') {
+                return 25
+            }
+            const isYakuhai = norm === '5z' || norm === '6z' || norm === '7z' ||
+                norm === roundWind || norm === seatWind
+            // Early game isolated guest wind (객풍): 100, dragon / value wind (역패): 90
+            if (isYakuhai) {
+                return isEarlyGame ? 92 : 90
+            }
+            return isEarlyGame ? 100 : 96
+        }
+
+        const suit = norm.slice(-1)
+        const val = Number.parseInt(norm.slice(0, -1), 10)
+
+        // In 3P (Sanma), 1m and 9m have no 2m..8m in deck, so they cannot form sequences
+        if (is3P && suit === 'm') {
+            return isEarlyGame ? 88 : 85
+        }
+
+        // Check neighboring connections in the same suit
+        let hasDist1 = false
+        let hasDist2 = false
+
+        for (const t of hand) {
+            const tn = this.normalizeTile(t)
+            if (tn.endsWith(suit)) {
+                const tv = Number.parseInt(tn.slice(0, -1), 10)
+                const diff = Math.abs(tv - val)
+                if (diff === 1) {
+                    hasDist1 = true
+                } else if (diff === 2) {
+                    hasDist2 = true
+                }
+            }
+        }
+
+        // If completely isolated (no distance 1 and no distance 2)
+        if (!hasDist1 && !hasDist2) {
+            if (val === 1 || val === 9) {
+                // Isolated terminal (노두패): 80 (84 in early game)
+                return isEarlyGame ? 84 : 80
+            }
+            if (val === 2 || val === 8) {
+                // Isolated 2, 8: 60
+                return 60
+            }
+            if (val === 3 || val === 7) {
+                // Isolated 3, 7: 45
+                return 45
+            }
+            if (val === 4 || val === 6) {
+                // Isolated 4, 6: 42
+                return 42
+            }
+            // Isolated 5: 40
+            return 40
+        }
+
+        // Connected shapes (has neighbor of same suit)
+        if (!hasDist1 && hasDist2) {
+            // Kanchan connection
+            if (val === 1 || val === 9) {
+                return 35
+            }
+            if (val === 2 || val === 8) {
+                return 32
+            }
+            return 28
+        }
+
+        // Adjacent / ryanmen / penchan connection
+        if (val === 1 || val === 9) {
+            return 25
+        }
+        if (val === 2 || val === 8) {
+            return 20
+        }
+        return 10
     }
 
     /*_ GEMINI THINKING _*/
