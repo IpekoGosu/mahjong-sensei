@@ -39,7 +39,7 @@ jobs:
               with:
                   gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
                   github-token: ${{ steps.app-token.outputs.token }}
-                  model: 'gemini-2.5-flash'
+                  model: 'gemini-3.8-flash'
                   thinking-level: 'HIGH'
                   bot-name: 'agy-reviewer-ksw'
                   bot-mention: '@agy-reviewer-ksw, @AGY'
