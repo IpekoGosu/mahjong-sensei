@@ -135,7 +135,7 @@ export class CoachingAdvisor {
             }
 
             if (action.type === 'RecordDealTile') {
-                if (action.doras) {
+                if (action.doras && action.doras.length > seenDoraCount) {
                     for (const dora of action.doras.slice(seenDoraCount)) {
                         this.addVisibleTile(dora, visibleCounts)
                     }
@@ -146,7 +146,7 @@ export class CoachingAdvisor {
                     currentHand.push(action.tile)
                 }
             } else if (action.type === 'RecordDiscardTile') {
-                if (action.doras) {
+                if (action.doras && action.doras.length > seenDoraCount) {
                     for (const dora of action.doras.slice(seenDoraCount)) {
                         this.addVisibleTile(dora, visibleCounts)
                     }
@@ -436,6 +436,13 @@ export class CoachingAdvisor {
                     }
                 }
             } else if (action.type === 'RecordBaBei') {
+                if (action.doras && action.doras.length > seenDoraCount) {
+                    for (const dora of action.doras.slice(seenDoraCount)) {
+                        this.addVisibleTile(dora, visibleCounts)
+                    }
+                    seenDoraCount = action.doras.length
+                }
+
                 this.addVisibleTile('4z', visibleCounts)
                 if (action.seat === targetSeat) {
                     const idx = currentHand.indexOf('4z')
