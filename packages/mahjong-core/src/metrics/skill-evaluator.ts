@@ -41,7 +41,7 @@ export class SkillEvaluator {
 
         for (const action of round.actions) {
             if (action.type === 'RecordDealTile') {
-                if (action.doras) {
+                if (action.doras && action.doras.length > seenDoraCount) {
                     for (const dora of action.doras.slice(seenDoraCount)) {
                         this.addVisibleTile(dora, visibleTileCounts)
                     }
@@ -53,7 +53,7 @@ export class SkillEvaluator {
                     this.addVisibleTile(action.tile, visibleTileCounts)
                 }
             } else if (action.type === 'RecordDiscardTile') {
-                if (action.doras) {
+                if (action.doras && action.doras.length > seenDoraCount) {
                     for (const dora of action.doras.slice(seenDoraCount)) {
                         this.addVisibleTile(dora, visibleTileCounts)
                     }
@@ -145,18 +145,7 @@ export class SkillEvaluator {
                     }
                 }
             } else if (action.type === 'RecordAnGangAddGang') {
-                if (action.seat !== targetSeat) {
-                    if (action.gangType === 'ankan') {
-                        for (const tile of action.tiles) {
-                            this.addVisibleTile(tile, visibleTileCounts)
-                        }
-                    } else if (action.tiles.length > 0) {
-                        const addedTile = action.tiles[0]
-                        if (addedTile) {
-                            this.addVisibleTile(addedTile, visibleTileCounts)
-                        }
-                    }
-                } else {
+                if (action.seat === targetSeat) {
                     if (action.gangType === 'ankan') {
                         targetMeldCount++
                         for (const tile of action.tiles) {
@@ -168,6 +157,7 @@ export class SkillEvaluator {
                             if (idx !== -1) {
                                 currentHand.splice(idx, 1)
                             }
+                            this.addVisibleTile(tile, visibleTileCounts)
                         }
                     } else if (action.tiles.length > 0) {
                         const addedTile = action.tiles[0]
@@ -180,11 +170,23 @@ export class SkillEvaluator {
                             if (idx !== -1) {
                                 currentHand.splice(idx, 1)
                             }
+                            this.addVisibleTile(addedTile, visibleTileCounts)
+                        }
+                    }
+                } else {
+                    if (action.gangType === 'ankan') {
+                        for (const tile of action.tiles) {
+                            this.addVisibleTile(tile, visibleTileCounts)
+                        }
+                    } else if (action.tiles.length > 0) {
+                        const addedTile = action.tiles[0]
+                        if (addedTile) {
+                            this.addVisibleTile(addedTile, visibleTileCounts)
                         }
                     }
                 }
             } else if (action.type === 'RecordBaBei') {
-                if (action.doras) {
+                if (action.doras && action.doras.length > seenDoraCount) {
                     for (const dora of action.doras.slice(seenDoraCount)) {
                         this.addVisibleTile(dora, visibleTileCounts)
                     }
@@ -196,9 +198,8 @@ export class SkillEvaluator {
                     if (idx !== -1) {
                         currentHand.splice(idx, 1)
                     }
-                } else {
-                    this.addVisibleTile('4z', visibleTileCounts)
                 }
+                this.addVisibleTile('4z', visibleTileCounts)
             } else if (action.type === 'RecordHule') {
                 for (const h of action.hules) {
                     const delta = h.deltaScores[targetSeat] ?? 0

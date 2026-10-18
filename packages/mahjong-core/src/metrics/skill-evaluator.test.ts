@@ -536,3 +536,47 @@ test('SkillEvaluator - evaluateRound: RecordBaBei reveals new doras and updates 
     assert.strictEqual(metric.foldAccuracyRate, 0.95)
 })
 
+test('SkillEvaluator - evaluateRound: target seat RecordBaBei and RecordAnGangAddGang update visibleTileCounts', () => {
+    const evaluator = new SkillEvaluator()
+
+    const roundRecord: MajsoulRoundRecord = {
+        header: {
+            type: 'RecordNewRound',
+            chang: 0,
+            ju: 0,
+            ben: 0,
+            liqi: 0,
+            scores: [35000, 35000, 35000, 0],
+            dora: '9m',
+            hands: [
+                ['4z', '1p', '1p', '1p', '1p', '2p', '3p', '7s', '8s', '9s', '1s', '2s', '3s'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7s', '8s', '9s', '1s', '2s', '3s', '4s'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7s', '8s', '9s', '1s', '2s', '3s', '4s'],
+                []
+            ]
+        },
+        actions: [
+            // Target seat 0 declares Kita (4z placed face-up)
+            { type: 'RecordBaBei', seat: 0, isMoqie: false },
+            { type: 'RecordDealTile', seat: 0, tile: '4s' },
+            // Target seat 0 declares Ankan on 1p
+            { type: 'RecordAnGangAddGang', seat: 0, gangType: 'ankan', tiles: ['1p', '1p', '1p', '1p'] },
+            { type: 'RecordDealTile', seat: 0, tile: '5s' },
+            // Opponent 1 declares Riichi
+            { type: 'RecordDiscardTile', seat: 1, tile: '9s', isMoqie: false, isLiqi: true },
+            // Opponents also declared Kita for 4z earlier (2 copies from opponents)
+            { type: 'RecordBaBei', seat: 1, isMoqie: false },
+            { type: 'RecordBaBei', seat: 2, isMoqie: false },
+            // Seat 0 draws second 4z (total 4z visible: 1 from seat 0 kita + 2 from opponents kita + 1 in hand = 4 copies -> 1.0 safety)
+            { type: 'RecordDealTile', seat: 0, tile: '4z' },
+            { type: 'RecordDiscardTile', seat: 0, tile: '4z', isMoqie: true, isLiqi: false },
+            { type: 'RecordNoTile', tenpaiSeats: [1], deltaScores: [-1000, 2000, -1000, 0] }
+        ]
+    }
+
+    const metric = evaluator.evaluateRound(roundRecord, 0)
+    // 4 visible copies of 4z (honor tile) yields 1.0 safety
+    assert.strictEqual(metric.foldAccuracyRate, 1.0)
+})
+
+
