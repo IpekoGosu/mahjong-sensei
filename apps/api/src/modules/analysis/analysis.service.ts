@@ -263,7 +263,7 @@ export class AnalysisService {
 
         const damatenRate = windowWinCount > 0
             ? Number(((windowDamatenCount / windowWinCount) * 100).toFixed(1))
-            : (windowTotalRounds > 0 ? Number(((windowDamatenCount / windowTotalRounds) * 100).toFixed(1)) : 0)
+            : 0
 
         const initiativeRate = windowRiichiCount > 0
             ? Number(((windowInitiativeCount / windowRiichiCount) * 100).toFixed(1))
@@ -271,7 +271,7 @@ export class AnalysisService {
 
         const uradoraRate = windowRiichiWinCount > 0
             ? Number(((windowUradoraHitsCount / windowRiichiWinCount) * 100).toFixed(1))
-            : (windowWinCount > 0 ? Number(((windowUradoraHitsCount / windowWinCount) * 100).toFixed(1)) : 0)
+            : 0
 
         const styleDiagnosis = this.styleEvaluator.evaluateStyle({
             gameMode: mode,

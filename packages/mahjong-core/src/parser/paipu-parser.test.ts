@@ -31,7 +31,7 @@ test('PaipuParser - Parse sample game and compute round metrics', () => {
     assert.strictEqual(round0Seat0.isRiichi, false)
     assert.strictEqual(round0Seat0.isFuro, false)
     assert.strictEqual(round0Seat0.isDamaten, true)
-    assert.strictEqual(round0Seat0.isInitiative, true)
+    assert.strictEqual(round0Seat0.isInitiative, false)
 
     const round1Seat1 = result.roundMetrics.find((m) => m.roundIndex === 1 && m.seat === 1)
     assert.ok(round1Seat1 !== undefined)

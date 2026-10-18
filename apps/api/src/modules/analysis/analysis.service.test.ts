@@ -126,3 +126,61 @@ test('AnalysisService - Aggregate window metrics, compute rates, and evaluate st
     assert.strictEqual(stats.styleDiagnosis.defenseType, '철벽 수비')
     assert.strictEqual(stats.styleDiagnosis.skillRemark, '3마 상위 5% 철벽 수비')
 })
+
+test('AnalysisService - Zero denominator fallbacks for damaten, initiative, and uradora rates', async () => {
+    const service = new MockAnalysisService()
+
+    const mockGames: ParticipantWithGameRounds[] = [
+        {
+            id: 'p-0',
+            gameId: 'game-1',
+            playerId: 'player-1',
+            seat: 0 as SeatIndex,
+            finalScore: 20000,
+            finalRank: 3,
+            luckScore: 30,
+            skillScore: 40,
+            game: {
+                id: 'game-1',
+                roomType: '4인 왕탁 동풍전',
+                gameDate: new Date(1720000000000),
+                rounds: [
+                    {
+                        id: 'round-1-0',
+                        roundIndex: 0,
+                        roundMetrics: [
+                            {
+                                seat: 0 as SeatIndex,
+                                startShanten: 4.0,
+                                startDoraCount: 0,
+                                drawLuckRatio: 0.10,
+                                uradoraHits: 0,
+                                dealInScore: 0,
+                                tsumoLossScore: 0,
+                                tileEfficiency: 0.60,
+                                luckScore: 30,
+                                skillScore: 40,
+                                isWin: false,
+                                isRiichi: false,
+                                isFuro: true,
+                                isDamaten: false,
+                                isInitiative: false
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    ]
+
+    service.mockParticipants = mockGames
+
+    const stats = await service.getRollingStats(10001, 10, '4p')
+
+    assert.strictEqual(stats.totalGames, 1)
+    assert.strictEqual(stats.winRate, 0)
+    assert.strictEqual(stats.riichiRate, 0)
+    assert.strictEqual(stats.damatenRate, 0)
+    assert.strictEqual(stats.initiativeRate, 0)
+    assert.strictEqual(stats.uradoraRate, 0)
+})

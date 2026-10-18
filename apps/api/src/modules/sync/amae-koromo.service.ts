@@ -526,7 +526,7 @@ export class AmaeKoromoService {
             const isRiichi = riichiIndices.has(i)
             const isFuro = furoIndices.has(i)
             const isDamaten = damatenIndices.has(i)
-            const isInitiative = initiativeIndices.has(i) || (isWin && !isRiichi)
+            const isInitiative = initiativeIndices.has(i)
             const uradoraHits = uradoraIndices.has(i) ? 1 : 0
             const dealInScore = isDealIn ? avgDealInPts : 0
 

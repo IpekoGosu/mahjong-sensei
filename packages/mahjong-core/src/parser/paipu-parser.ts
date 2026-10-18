@@ -295,12 +295,7 @@ export class PaipuParser {
             const isTenpaiAtRyukyoku = ryukyokuTenpaiSeats.includes(s)
             const isDamaten = !isRiichi && !isFuro && (isWin || isTenpaiAtRyukyoku)
 
-            let isInitiative = false
-            if (isRiichi) {
-                isInitiative = firstRiichiSeat === s
-            } else if (isWin) {
-                isInitiative = firstRiichiSeat === null || firstRiichiSeat === s
-            }
+            const isInitiative = isRiichi && firstRiichiSeat === s
 
             result[s] = {
                 isRiichi,

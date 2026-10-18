@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "round_metrics" ADD COLUMN "isRiichi" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "isFuro" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "isDamaten" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN "isInitiative" BOOLEAN NOT NULL DEFAULT false;

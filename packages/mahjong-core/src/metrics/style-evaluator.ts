@@ -116,7 +116,7 @@ export class StyleEvaluator {
             if (input.negativeRate !== undefined && input.negativeRate > 0) {
                 return `다마텐율 ${input.damatenRate}%와 선제율 ${input.initiativeRate}%로 상대를 침착하게 공략하며, 들통율이 ${input.negativeRate}%에 불과합니다.`
             }
-            return `다마텐율 ${input.damatenRate}%와 선제율 ${input.initiativeRate}%로 상대를 침착하게 공략하며, 방총율이 ${input.dealInRate}%의 견고한 수비를 유지합니다.`
+            return `다마텐율 ${input.damatenRate}%와 선제율 ${input.initiativeRate}%로 상대를 침착하게 공략하며, 방총율 ${input.dealInRate}%의 견고한 수비를 유지합니다.`
         }
 
         if (attackType === '단단한 멘젠 선제') {
