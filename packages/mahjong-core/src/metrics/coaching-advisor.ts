@@ -145,33 +145,13 @@ export class CoachingAdvisor {
             }
 
             if (action.type === 'RecordDealTile') {
-                if (action.doras) {
-                    for (const dora of action.doras) {
-                        if (!doraIndicators.includes(dora)) {
-                            doraIndicators.push(dora)
-                        }
-                    }
-                    for (const dora of action.doras.slice(seenDoraCount)) {
-                        this.addVisibleTile(dora, visibleCounts)
-                    }
-                    seenDoraCount = action.doras.length
-                }
+                seenDoraCount = this.syncRevealedDoras(action.doras, doraIndicators, visibleCounts, seenDoraCount)
 
                 if (action.seat === targetSeat) {
                     currentHand.push(action.tile)
                 }
             } else if (action.type === 'RecordDiscardTile') {
-                if (action.doras) {
-                    for (const dora of action.doras) {
-                        if (!doraIndicators.includes(dora)) {
-                            doraIndicators.push(dora)
-                        }
-                    }
-                    for (const dora of action.doras.slice(seenDoraCount)) {
-                        this.addVisibleTile(dora, visibleCounts)
-                    }
-                    seenDoraCount = action.doras.length
-                }
+                seenDoraCount = this.syncRevealedDoras(action.doras, doraIndicators, visibleCounts, seenDoraCount)
 
                 lastDiscardedTile = action.tile
                 const normDiscard = this.normalizeTile(action.tile)
@@ -472,6 +452,7 @@ export class CoachingAdvisor {
                     }
                 }
             } else if (action.type === 'RecordBaBei') {
+                seenDoraCount = this.syncRevealedDoras(action.doras, doraIndicators, visibleCounts, seenDoraCount)
                 this.addVisibleTile('4z', visibleCounts)
                 if (action.seat === targetSeat) {
                     const idx = currentHand.indexOf('4z')
@@ -613,6 +594,24 @@ export class CoachingAdvisor {
     }
 
     /*_ GEMINI THINKING _*/
+    protected syncRevealedDoras(
+        doras: readonly string[] | undefined,
+        doraIndicators: string[],
+        visibleCounts: Map<string, number>,
+        seenDoraCount: number
+    ): number {
+        if (!doras || doras.length <= seenDoraCount) {
+            return seenDoraCount
+        }
+        const newDoras = doras.slice(seenDoraCount)
+        for (const dora of newDoras) {
+            doraIndicators.push(dora)
+            this.addVisibleTile(dora, visibleCounts)
+        }
+        return doras.length
+    }
+
+    /*_ GEMINI THINKING _*/
     protected getTileDoraValue(
         tile: string,
         doraIndicators: readonly string[],
@@ -623,6 +622,9 @@ export class CoachingAdvisor {
             value += 1
         }
         const norm = this.normalizeTile(tile)
+        if (is3P && norm === '4z') {
+            value += 1
+        }
         for (const indicator of doraIndicators) {
             const nextDora = TileConverter.getNextDoraTile(indicator, is3P)
             if (norm === nextDora) {
@@ -648,6 +650,9 @@ export class CoachingAdvisor {
         // If tile forms a pair or triplet in hand, it is not an isolated floating tile
         if (countInHand > 1) {
             if (norm.endsWith('z')) {
+                if (is3P && norm === '4z') {
+                    return 20
+                }
                 const isYakuhai = norm === '5z' || norm === '6z' || norm === '7z' ||
                     norm === roundWind || norm === seatWind
                 return isYakuhai ? 28 : 30
@@ -665,6 +670,10 @@ export class CoachingAdvisor {
         // countInHand === 1 (single tile in hand)
         // Check honor tiles (1z..7z)
         if (norm.endsWith('z')) {
+            // In 3P (Sanma), North (4z) is Kita (拔北) nuki dora and should be preserved
+            if (is3P && norm === '4z') {
+                return 25
+            }
             const isYakuhai = norm === '5z' || norm === '6z' || norm === '7z' ||
                 norm === roundWind || norm === seatWind
             // Early game isolated guest wind (객풍): 100, dragon / value wind (역패): 90

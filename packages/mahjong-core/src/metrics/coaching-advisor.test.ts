@@ -63,6 +63,15 @@ class MockCoachingAdvisor extends CoachingAdvisor {
         return this.getDiscardPreference(tile, hand, is3P, roundWind, seatWind, turnNumber)
     }
 
+    public testSyncRevealedDoras(
+        doras: readonly string[] | undefined,
+        doraIndicators: string[],
+        visibleCounts: Map<string, number>,
+        seenDoraCount: number
+    ): number {
+        return this.syncRevealedDoras(doras, doraIndicators, visibleCounts, seenDoraCount)
+    }
+
     public testBuildMistakeFeedback(
         categoryOrParams: MistakeCategory | MistakeFeedbackParams,
         turnNumber?: number,
@@ -1045,3 +1054,54 @@ test('CoachingAdvisor - analyzeRound: optimal discard correctly prioritizes non-
     const mistakes = advisor.analyzeRound(roundRecord, 0, 0, false)
     assert.strictEqual(mistakes.length, 0)
 })
+
+test('MockCoachingAdvisor - 3P (Sanma) Kita North (4z) is preserved as dora and preferred over middle tiles', () => {
+    const advisor = new MockCoachingAdvisor()
+    const hand = ['1p', '2p', '3p', '4p', '5p', '6p', '7s', '8s', '9s', '1s', '2s', '4z', '5s']
+
+    // 4z in 3P has dora value 1 (Kita dora)
+    const doraVal4z = advisor.testGetTileDoraValue('4z', ['1m'], true)
+    assert.strictEqual(doraVal4z, 1)
+
+    // 4z in 4P has dora value 0 (normal guest wind)
+    const doraVal4z4P = advisor.testGetTileDoraValue('4z', ['1m'], false)
+    assert.strictEqual(doraVal4z4P, 0)
+
+    // In 3P, isolated 4z has lower discard preference (25) than isolated middle simple tiles (40+)
+    const pref4z3P = advisor.testGetDiscardPreference('4z', hand, true, '1z', '2z', 1)
+    assert.strictEqual(pref4z3P, 25)
+
+    // findOptimalDiscard in 3P chooses to discard isolated 9m rather than Kita 4z when ukeire is equal
+    const optimal3P = advisor.testFindOptimalDiscard(
+        ['1p', '2p', '3p', '4p', '5p', '6p', '7s', '8s', '9s', '1z', '1z', '4z', '9m'],
+        new Map(),
+        true,
+        undefined,
+        0,
+        [],
+        1,
+        '1z',
+        '2z'
+    )
+    // 4z must not be chosen for discard because it is a Kita dora (9m discarded instead)
+    assert.strictEqual(optimal3P.tile, '9m')
+    assert.notStrictEqual(optimal3P.tile, '4z')
+})
+
+test('CoachingAdvisor - syncRevealedDoras handles duplicate kan dora indicators (2-fan dora)', () => {
+    const advisor = new MockCoachingAdvisor()
+    const doraIndicators: string[] = ['1m']
+    const visibleCounts = new Map<string, number>([['1m', 1]])
+
+    // Kan reveals another 1m (identical dora indicator, total 2x 1m)
+    const newSeenCount = advisor.testSyncRevealedDoras(['1m', '1m'], doraIndicators, visibleCounts, 1)
+    assert.strictEqual(newSeenCount, 2)
+    assert.strictEqual(doraIndicators.length, 2)
+    assert.strictEqual(doraIndicators[0], '1m')
+    assert.strictEqual(doraIndicators[1], '1m')
+
+    // 2m has dora value 2 because 1m indicator appears twice!
+    const doraVal2m = advisor.testGetTileDoraValue('2m', doraIndicators, false)
+    assert.strictEqual(doraVal2m, 2)
+})
+
