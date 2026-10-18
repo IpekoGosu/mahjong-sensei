@@ -27,12 +27,18 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Generate GitHub App Token
+        uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.AGY_APP_ID }}
+          private-key: ${{ secrets.AGY_PRIVATE_KEY }}
+
       - name: Run AGY Code Reviewer
         uses: IpekoGosu/agy-reviewer-action@v1
         with:
           gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
-          app-id: ${{ secrets.AGY_APP_ID }}
-          private-key: ${{ secrets.AGY_PRIVATE_KEY }}
+          github-token: ${{ steps.app-token.outputs.token }}
           model: 'gemini-3.8-flash'
           thinking-level: 'HIGH'
           bot-name: 'agy-reviewer-ksw'
