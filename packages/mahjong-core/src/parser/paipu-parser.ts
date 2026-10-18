@@ -3,9 +3,16 @@ import {
     PaipuDetail,
     PlayerSummary,
     PaipuRound,
-    PaipuAction
+    PaipuAction,
+    PaipuRoundResult,
+    PaipuRoundMetricSummary
 } from '@mahjong-sensei/types'
-import { MajsoulGameRecord, MajsoulRoundRecord } from './types'
+import {
+    MajsoulGameRecord,
+    MajsoulRoundRecord,
+    MajsoulRecordHule,
+    MajsoulRecordNoTile
+} from './types'
 import { LuckEvaluator } from '../metrics/luck-evaluator'
 import { SkillEvaluator } from '../metrics/skill-evaluator'
 
@@ -104,7 +111,23 @@ export class PaipuParser {
                 })
             }
 
-            parsedRounds.push(this.transformRound(round, rIdx))
+            const currentRoundMetrics: PaipuRoundMetricSummary[] = roundMetrics
+                .filter((m) => m.roundIndex === rIdx)
+                .map((m) => ({
+                    seat: m.seat,
+                    startingShanten: m.startShanten,
+                    startingDoraCount: m.startDoraCount,
+                    luckScore: m.luckScore,
+                    skillScore: m.skillScore,
+                    tileEfficiency: m.tileEfficiency,
+                    dealInScore: m.dealInScore,
+                    isWin: m.isWin,
+                    isRiichi: m.isRiichi,
+                    isFuro: m.isFuro,
+                    isDamaten: m.isDamaten
+                }))
+
+            parsedRounds.push(this.transformRound(round, rIdx, currentRoundMetrics))
         }
 
         // Calculate final scores and ranks
@@ -160,12 +183,21 @@ export class PaipuParser {
         }
     }
 
-    private transformRound(round: MajsoulRoundRecord, roundIndex: number): PaipuRound {
+    private transformRound(
+        round: MajsoulRoundRecord,
+        roundIndex: number,
+        roundMetrics?: readonly PaipuRoundMetricSummary[]
+    ): PaipuRound {
+        /*_ GEMINI THINKING _*/
         const roundNames = ['동1국', '동2국', '동3국', '동4국', '남1국', '남2국', '남3국', '남4국']
         const name = roundNames[round.header.ju] ?? `동${round.header.ju + 1}국`
 
         let step = 0
         const actions: PaipuAction[] = []
+        const doraIndicators: string[] = [round.header.dora]
+
+        let huleAction: MajsoulRecordHule | null = null
+        let noTileAction: MajsoulRecordNoTile | null = null
 
         for (const action of round.actions) {
             step++
@@ -176,6 +208,13 @@ export class PaipuParser {
                     type: 'tsumo',
                     tile: action.tile
                 })
+                if (action.doras) {
+                    for (const d of action.doras) {
+                        if (!doraIndicators.includes(d)) {
+                            doraIndicators.push(d)
+                        }
+                    }
+                }
             } else if (action.type === 'RecordDiscardTile') {
                 actions.push({
                     step,
@@ -184,6 +223,13 @@ export class PaipuParser {
                     tile: action.tile,
                     isRiichi: action.isLiqi
                 })
+                if (action.doras) {
+                    for (const d of action.doras) {
+                        if (!doraIndicators.includes(d)) {
+                            doraIndicators.push(d)
+                        }
+                    }
+                }
             } else if (action.type === 'RecordChiPengGang') {
                 actions.push({
                     step,
@@ -198,7 +244,16 @@ export class PaipuParser {
                     type: action.gangType,
                     consumedTiles: action.tiles
                 })
+            } else if (action.type === 'RecordBaBei') {
+                if (action.doras) {
+                    for (const d of action.doras) {
+                        if (!doraIndicators.includes(d)) {
+                            doraIndicators.push(d)
+                        }
+                    }
+                }
             } else if (action.type === 'RecordHule') {
+                huleAction = action
                 for (const h of action.hules) {
                     actions.push({
                         step,
@@ -207,11 +262,86 @@ export class PaipuParser {
                     })
                 }
             } else if (action.type === 'RecordNoTile') {
+                noTileAction = action
                 actions.push({
                     step,
                     seat: 0,
                     type: 'ryukyoku'
                 })
+            }
+        }
+
+        let roundResult: PaipuRoundResult | undefined = undefined
+
+        if (huleAction && huleAction.hules.length > 0) {
+            const winnerSeats = huleAction.hules.map((h) => h.seat)
+            const combinedYaku: string[] = []
+            let totalHandScore = 0
+
+            for (const h of huleAction.hules) {
+                totalHandScore += h.handScore
+                for (const y of h.yaku) {
+                    if (!combinedYaku.includes(y)) {
+                        combinedYaku.push(y)
+                    }
+                }
+                if (h.uradoras && h.uradoras.length > 0) {
+                    const uraName = `우라도라 ${h.uradoras.length}`
+                    if (!combinedYaku.includes(uraName)) {
+                        combinedYaku.push(uraName)
+                    }
+                }
+            }
+
+            const aggregatedDeltaScores: number[] = [0, 0, 0, 0]
+            for (const h of huleAction.hules) {
+                if (h.deltaScores) {
+                    h.deltaScores.forEach((d, idx) => {
+                        aggregatedDeltaScores[idx] = (aggregatedDeltaScores[idx] ?? 0) + d
+                    })
+                }
+            }
+
+            const losingSeats: SeatIndex[] = []
+            for (let seat = 0; seat < 4; seat++) {
+                const s = seat as SeatIndex
+                if (!winnerSeats.includes(s) && (aggregatedDeltaScores[s] ?? 0) < 0) {
+                    losingSeats.push(s)
+                }
+            }
+
+            if (losingSeats.length === 1 && losingSeats[0] !== undefined) {
+                const loserSeat = losingSeats[0]
+                const winnerNames = winnerSeats.map((w) => `${w + 1}번가`).join(', ')
+                roundResult = {
+                    type: 'ron',
+                    winnerSeats,
+                    loserSeat,
+                    score: totalHandScore,
+                    deltaScores: aggregatedDeltaScores,
+                    yakuList: combinedYaku,
+                    summaryKo: `${winnerNames} 론 화료 (${loserSeat + 1}번가 방총, ${totalHandScore.toLocaleString()}점)`
+                }
+            } else {
+                const winnerSeat = winnerSeats[0] ?? 0
+                roundResult = {
+                    type: 'tsumo',
+                    winnerSeats,
+                    score: totalHandScore,
+                    deltaScores: aggregatedDeltaScores,
+                    yakuList: combinedYaku,
+                    summaryKo: `${winnerSeat + 1}번가 쯔모 화료 (${totalHandScore.toLocaleString()}점)`
+                }
+            }
+        } else if (noTileAction) {
+            const tenpaiList = noTileAction.tenpaiSeats.map((s) => `${s + 1}번가`).join(', ')
+            const summaryKo = noTileAction.tenpaiSeats.length > 0
+                ? `유국 (텐파이: ${tenpaiList})`
+                : '유국 (전원 노텐)'
+            roundResult = {
+                type: 'ryukyoku',
+                deltaScores: noTileAction.deltaScores,
+                summaryKo
             }
         }
 
@@ -221,9 +351,11 @@ export class PaipuParser {
             honba: round.header.ben,
             riichiSticks: round.header.liqi,
             initialScores: round.header.scores,
-            doraIndicators: [round.header.dora],
+            doraIndicators,
             startingHands: round.header.hands,
-            actions
+            actions,
+            result: roundResult,
+            roundMetrics
         }
     }
 
