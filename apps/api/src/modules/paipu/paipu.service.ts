@@ -186,12 +186,12 @@ export class PaipuService {
                     readonly rounds: MajsoulGameRecord['rounds']
                 }
                 const rawTs = rawRecord.timestamp ?? rawRecord.startTime
-                const ts = (typeof rawTs === 'number' && !Number.isNaN(rawTs) && rawTs > 0)
-                    ? rawTs
+                const ts = (typeof rawTs === 'number' && Number.isFinite(rawTs) && rawTs > 0)
+                    ? Math.floor(rawTs)
                     : Date.now()
                 record = {
                     uuid: rawRecord.uuid,
-                    roomType: rawRecord.roomType || '4인 금탁 반장전',
+                    roomType: rawRecord.roomType || (rawRecord.players.length === 3 ? '3인 금탁 반장전' : '4인 금탁 반장전'),
                     timestamp: ts,
                     players: rawRecord.players,
                     rounds: rawRecord.rounds

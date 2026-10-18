@@ -155,12 +155,12 @@ export class LiqiBinaryDecoder {
 
     /*_ GEMINI THINKING _*/
     public encodeGameRecord(record: MajsoulGameRecord, obfuscate: boolean = false): Uint8Array {
-        const ts = (typeof record.timestamp === 'number' && !Number.isNaN(record.timestamp) && record.timestamp > 0)
-            ? record.timestamp
+        const ts = (typeof record.timestamp === 'number' && Number.isFinite(record.timestamp) && record.timestamp > 0)
+            ? Math.floor(record.timestamp)
             : Date.now()
         const chunks: Uint8Array[] = [
             this.writeStringField(1, record.uuid),
-            this.writeStringField(2, record.roomType || '4인 금탁 반장전'),
+            this.writeStringField(2, record.roomType || (record.players?.length === 3 ? '3인 금탁 반장전' : '4인 금탁 반장전')),
             this.writeVarintField(3, ts)
         ]
 
@@ -415,7 +415,7 @@ export class LiqiBinaryDecoder {
         let v: bigint
         if (typeof val === 'bigint') {
             v = val
-        } else if (typeof val === 'number' && !Number.isNaN(val)) {
+        } else if (typeof val === 'number' && Number.isFinite(val)) {
             v = BigInt(Math.floor(val))
         } else {
             v = 0n
