@@ -24,6 +24,10 @@ export interface ParsedGameResult {
         readonly tsumoLossScore: number
         readonly tileEfficiency: number
         readonly isWin: boolean
+        readonly isRiichi: boolean
+        readonly isFuro: boolean
+        readonly isDamaten: boolean
+        readonly isInitiative: boolean
     }[]
 }
 
@@ -46,6 +50,10 @@ export class PaipuParser {
             tsumoLossScore: number
             tileEfficiency: number
             isWin: boolean
+            isRiichi: boolean
+            isFuro: boolean
+            isDamaten: boolean
+            isInitiative: boolean
         }[] = []
 
         const playerCount = (record.players.length === 3 || record.roomType.includes('3인')) ? 3 : 4
@@ -61,13 +69,20 @@ export class PaipuParser {
                 continue
             }
 
+            const styleFlags = this.analyzeRoundStyleFlags(round)
+
             for (let seat = 0; seat < playerCount; seat++) {
                 const s = seat as SeatIndex
                 const luckMetric = this.luckEvaluator.evaluateRound(round, s)
                 const skillMetric = this.skillEvaluator.evaluateRound(round, s)
+                const flags = styleFlags[s]
 
                 playerTotalLuck[s] = (playerTotalLuck[s] ?? 0) + luckMetric.luckScore
                 playerTotalSkill[s] = (playerTotalSkill[s] ?? 0) + skillMetric.skillScore
+
+                const isWin = flags.isWin || (luckMetric.isWin ?? false)
+                const dealInScore = flags.dealInScore > 0 ? flags.dealInScore : (skillMetric.dealInMistakeRate > 0 ? 8000 : 0)
+                const uradoraHits = flags.uradoraHits > 0 ? flags.uradoraHits : luckMetric.uradoraCount
 
                 roundMetrics.push({
                     roundIndex: rIdx,
@@ -77,11 +92,15 @@ export class PaipuParser {
                     startShanten: luckMetric.startingShanten,
                     startDoraCount: luckMetric.startingDoraCount,
                     drawLuckRatio: luckMetric.drawEfficiencyRatio,
-                    uradoraHits: luckMetric.uradoraCount,
-                    dealInScore: skillMetric.dealInMistakeRate > 0 ? 8000 : 0,
+                    uradoraHits,
+                    dealInScore,
                     tsumoLossScore: luckMetric.unavoidableDamage,
                     tileEfficiency: skillMetric.tileEfficiencyRate,
-                    isWin: luckMetric.isWin ?? false
+                    isWin,
+                    isRiichi: flags.isRiichi,
+                    isFuro: flags.isFuro,
+                    isDamaten: flags.isDamaten,
+                    isInitiative: flags.isInitiative
                 })
             }
 
@@ -207,4 +226,94 @@ export class PaipuParser {
             actions
         }
     }
+
+    /*_ GEMINI THINKING _*/
+    protected analyzeRoundStyleFlags(round: MajsoulRoundRecord): Record<SeatIndex, {
+        isRiichi: boolean
+        isFuro: boolean
+        isWin: boolean
+        isDamaten: boolean
+        isInitiative: boolean
+        dealInScore: number
+        uradoraHits: number
+    }> {
+        const isRiichiSeats = new Set<SeatIndex>()
+        const isFuroSeats = new Set<SeatIndex>()
+        const isWinSeats = new Set<SeatIndex>()
+        const dealInScores: Record<SeatIndex, number> = { 0: 0, 1: 0, 2: 0, 3: 0 }
+        const uradoraHitsBySeat: Record<SeatIndex, number> = { 0: 0, 1: 0, 2: 0, 3: 0 }
+        let firstRiichiSeat: SeatIndex | null = null
+        let ryukyokuTenpaiSeats: readonly SeatIndex[] = []
+
+        for (const action of round.actions) {
+            if (action.type === 'RecordDiscardTile' && action.isLiqi) {
+                isRiichiSeats.add(action.seat)
+                if (firstRiichiSeat === null) {
+                    firstRiichiSeat = action.seat
+                }
+            } else if (action.type === 'RecordChiPengGang') {
+                isFuroSeats.add(action.seat)
+            } else if (action.type === 'RecordAnGangAddGang' && action.gangType === 'kakan') {
+                isFuroSeats.add(action.seat)
+            } else if (action.type === 'RecordHule') {
+                for (const h of action.hules) {
+                    isWinSeats.add(h.seat)
+                    if (h.uradoras) {
+                        uradoraHitsBySeat[h.seat] = (uradoraHitsBySeat[h.seat] ?? 0) + h.uradoras.length
+                    }
+                    const losingSeats = ([0, 1, 2, 3] as SeatIndex[]).filter((st) => (h.deltaScores[st] ?? 0) < 0)
+                    if (losingSeats.length === 1 && losingSeats[0] !== undefined) {
+                        const loser = losingSeats[0]
+                        dealInScores[loser] = (dealInScores[loser] ?? 0) + Math.abs(h.deltaScores[loser] ?? 0)
+                    }
+                }
+            } else if (action.type === 'RecordNoTile') {
+                ryukyokuTenpaiSeats = action.tenpaiSeats
+            }
+        }
+
+        const result: Record<SeatIndex, {
+            isRiichi: boolean
+            isFuro: boolean
+            isWin: boolean
+            isDamaten: boolean
+            isInitiative: boolean
+            dealInScore: number
+            uradoraHits: number
+        }> = {
+            0: { isRiichi: false, isFuro: false, isWin: false, isDamaten: false, isInitiative: false, dealInScore: 0, uradoraHits: 0 },
+            1: { isRiichi: false, isFuro: false, isWin: false, isDamaten: false, isInitiative: false, dealInScore: 0, uradoraHits: 0 },
+            2: { isRiichi: false, isFuro: false, isWin: false, isDamaten: false, isInitiative: false, dealInScore: 0, uradoraHits: 0 },
+            3: { isRiichi: false, isFuro: false, isWin: false, isDamaten: false, isInitiative: false, dealInScore: 0, uradoraHits: 0 }
+        }
+
+        for (let seat = 0; seat < 4; seat++) {
+            const s = seat as SeatIndex
+            const isRiichi = isRiichiSeats.has(s)
+            const isFuro = isFuroSeats.has(s)
+            const isWin = isWinSeats.has(s)
+            const isTenpaiAtRyukyoku = ryukyokuTenpaiSeats.includes(s)
+            const isDamaten = !isRiichi && !isFuro && (isWin || isTenpaiAtRyukyoku)
+
+            let isInitiative = false
+            if (isRiichi) {
+                isInitiative = firstRiichiSeat === s
+            } else if (isWin) {
+                isInitiative = firstRiichiSeat === null || firstRiichiSeat === s
+            }
+
+            result[s] = {
+                isRiichi,
+                isFuro,
+                isWin,
+                isDamaten,
+                isInitiative,
+                dealInScore: dealInScores[s] ?? 0,
+                uradoraHits: uradoraHitsBySeat[s] ?? 0
+            }
+        }
+
+        return result
+    }
 }
+

@@ -56,6 +56,23 @@ class MockAmaeKoromoService extends AmaeKoromoService {
             southGroup
         })
     }
+
+    public testDistributeRoundStyleMetrics(
+        gameSpecs: readonly DeterministicGameSpec[],
+        extStats: Partial<AmaeExtendedStats>,
+        mode: GameMode
+    ): readonly {
+        readonly isWin: boolean
+        readonly isDealIn: boolean
+        readonly dealInScore: number
+        readonly isRiichi: boolean
+        readonly isFuro: boolean
+        readonly isDamaten: boolean
+        readonly isInitiative: boolean
+        readonly uradoraHits: number
+    }[] {
+        return this.distributeRoundStyleMetrics(gameSpecs, extStats, mode)
+    }
 }
 
 test('AmaeKoromoService - Mode ID to roomType label resolution (East vs South for 3P and 4P)', () => {
@@ -303,3 +320,65 @@ test('AmaeKoromoService - Float startShanten calculation from extStats (never ha
     assert.strictEqual(round2Seat2Dealer4P, 2.98)
     assert.strictEqual(round2Seat0NonDealer4P, 3.42)
 })
+
+test('AmaeKoromoService - Accurate round style metrics distribution based on extStats', () => {
+    /*_ GEMINI THINKING _*/
+    const service = new MockAmaeKoromoService()
+
+    const extStats: AmaeExtendedStats = {
+        count: 1000,
+        和牌率: 0.293,
+        自摸率: 0.408,
+        默听率: 0.192,
+        放铳率: 0.138,
+        副露率: 0.231,
+        立直率: 0.250,
+        平均打点: 8926,
+        平均铳点: 9398,
+        流局率: 0.101,
+        流听率: 0.435,
+        一发率: 0.203,
+        里宝率: 0.432,
+        先制率: 0.810,
+        平均起手向听: 3.27,
+        平均起手向听亲: 2.98,
+        平均起手向听子: 3.42,
+        played_modes: [21, 23, 24]
+    }
+
+    const specs = service.testBuildDeterministicGameSpecs(50, '3p')
+    const distributed = service.testDistributeRoundStyleMetrics(specs, extStats, '3p')
+
+    assert.strictEqual(distributed.length, 50)
+
+    const winCount = distributed.filter((d) => d.isWin).length
+    const dealInCount = distributed.filter((d) => d.isDealIn).length
+    const riichiCount = distributed.filter((d) => d.isRiichi).length
+    const furoCount = distributed.filter((d) => d.isFuro).length
+    const damatenCount = distributed.filter((d) => d.isDamaten).length
+    const initiativeCount = distributed.filter((d) => d.isInitiative).length
+    const uradoraCount = distributed.filter((d) => d.uradoraHits > 0).length
+
+    // Target counts for 50 games:
+    // Win: round(50 * 0.293) = 15 (30%)
+    assert.ok(Math.abs(winCount - 15) <= 1, `winCount ${winCount} is close to 15`)
+
+    // Deal-in: round(50 * 0.138) = 7 (14%)
+    assert.ok(Math.abs(dealInCount - 7) <= 1, `dealInCount ${dealInCount} is close to 7`)
+
+    // Riichi: round(50 * 0.250) = 13 (26%)
+    assert.ok(Math.abs(riichiCount - 13) <= 1, `riichiCount ${riichiCount} is close to 13`)
+
+    // Furo: round(50 * 0.231) = 12 (24%)
+    assert.ok(Math.abs(furoCount - 12) <= 1, `furoCount ${furoCount} is close to 12`)
+
+    // Damaten: round(15 * 0.192) = 3 (out of wins)
+    assert.ok(damatenCount >= 2 && damatenCount <= 4, `damatenCount ${damatenCount} is ~3`)
+
+    // Initiative: round(13 * 0.810) = 11 (out of riichi)
+    assert.ok(initiativeCount >= 10 && initiativeCount <= 15, `initiativeCount ${initiativeCount} is accurate`)
+
+    // Uradora hits: present on riichi wins
+    assert.ok(uradoraCount >= 3 && uradoraCount <= 6, `uradoraCount ${uradoraCount} is accurate`)
+})
+
