@@ -105,26 +105,9 @@ export class LuckEvaluator {
         return count
     }
 
+    /*_ GEMINI THINKING _*/
     protected getNextDoraTile(indicator: string, is3P: boolean = false): string {
-        const norm = indicator.replace('0m', '5m').replace('0p', '5p').replace('0s', '5s')
-        const suit = norm.slice(-1)
-        const val = parseInt(norm.slice(0, -1), 10)
-
-        if (is3P && suit === 'm' && val === 1) {
-            return '9m'
-        }
-
-        if (suit === 'z') {
-            if (val >= 1 && val <= 4) {
-                return `${val === 4 ? 1 : val + 1}z`
-            }
-            if (val >= 5 && val <= 7) {
-                return `${val === 7 ? 5 : val + 1}z`
-            }
-        }
-
-        const nextVal = val === 9 ? 1 : val + 1
-        return `${nextVal}${suit}`
+        return TileConverter.getNextDoraTile(indicator, is3P)
     }
 
     private isTsumoWin(deltaScores: readonly [number, number, number, number], winnerSeat: SeatIndex): boolean {
