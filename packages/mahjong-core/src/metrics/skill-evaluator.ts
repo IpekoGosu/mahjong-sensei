@@ -7,6 +7,7 @@ export class SkillEvaluator {
 
     public evaluateRound(round: MajsoulRoundRecord, targetSeat: SeatIndex): RoundSkillMetric {
         /*_ GEMINI THINKING _*/
+        const is3P = round.actions.some((a) => a.type === 'RecordBaBei') || (round.header.hands[3]?.length ?? 0) === 0
         let discardCount = 0
         let efficientDiscards = 0
         let riichiOpponents = 0
@@ -14,6 +15,7 @@ export class SkillEvaluator {
         let safePostRiichiDiscards = 0
         let didDealIn = false
         let dealInScore = 0
+        let targetMeldCount = 0
 
         const activeRiichiSeats = new Set<SeatIndex>()
         const currentHand = [...(round.header.hands[targetSeat] ?? [])]
@@ -39,7 +41,7 @@ export class SkillEvaluator {
 
         for (const action of round.actions) {
             if (action.type === 'RecordDealTile') {
-                if (action.doras) {
+                if (action.doras && action.doras.length > seenDoraCount) {
                     for (const dora of action.doras.slice(seenDoraCount)) {
                         this.addVisibleTile(dora, visibleTileCounts)
                     }
@@ -51,7 +53,7 @@ export class SkillEvaluator {
                     this.addVisibleTile(action.tile, visibleTileCounts)
                 }
             } else if (action.type === 'RecordDiscardTile') {
-                if (action.doras) {
+                if (action.doras && action.doras.length > seenDoraCount) {
                     for (const dora of action.doras.slice(seenDoraCount)) {
                         this.addVisibleTile(dora, visibleTileCounts)
                     }
@@ -81,12 +83,12 @@ export class SkillEvaluator {
 
                 if (action.seat === targetSeat) {
                     discardCount++
-                    const prevShanten = this.shantenCalc.calculate(currentHand)
+                    const prevShanten = this.shantenCalc.calculate(currentHand, is3P, targetMeldCount)
                     const idx = currentHand.indexOf(action.tile)
                     if (idx !== -1) {
                         currentHand.splice(idx, 1)
                     }
-                    const afterShanten = this.shantenCalc.calculate(currentHand)
+                    const afterShanten = this.shantenCalc.calculate(currentHand, is3P, targetMeldCount)
 
                     // Efficient discard: did not retreat in shanten
                     if (afterShanten <= prevShanten) {
@@ -130,6 +132,7 @@ export class SkillEvaluator {
                 }
 
                 if (action.seat === targetSeat) {
+                    targetMeldCount++
                     for (const tile of handTilesToRemove) {
                         let idx = currentHand.indexOf(tile)
                         if (idx === -1) {
@@ -142,7 +145,35 @@ export class SkillEvaluator {
                     }
                 }
             } else if (action.type === 'RecordAnGangAddGang') {
-                if (action.seat !== targetSeat) {
+                if (action.seat === targetSeat) {
+                    if (action.gangType === 'ankan') {
+                        targetMeldCount++
+                        for (const tile of action.tiles) {
+                            let idx = currentHand.indexOf(tile)
+                            if (idx === -1) {
+                                const norm = this.normalizeTile(tile)
+                                idx = currentHand.findIndex((h) => this.normalizeTile(h) === norm)
+                            }
+                            if (idx !== -1) {
+                                currentHand.splice(idx, 1)
+                            }
+                            this.addVisibleTile(tile, visibleTileCounts)
+                        }
+                    } else if (action.tiles.length > 0) {
+                        const addedTile = action.tiles[0]
+                        if (addedTile) {
+                            let idx = currentHand.indexOf(addedTile)
+                            if (idx === -1) {
+                                const norm = this.normalizeTile(addedTile)
+                                idx = currentHand.findIndex((h) => this.normalizeTile(h) === norm)
+                            }
+                            if (idx !== -1) {
+                                currentHand.splice(idx, 1)
+                            }
+                            this.addVisibleTile(addedTile, visibleTileCounts)
+                        }
+                    }
+                } else {
                     if (action.gangType === 'ankan') {
                         for (const tile of action.tiles) {
                             this.addVisibleTile(tile, visibleTileCounts)
@@ -154,6 +185,21 @@ export class SkillEvaluator {
                         }
                     }
                 }
+            } else if (action.type === 'RecordBaBei') {
+                if (action.doras && action.doras.length > seenDoraCount) {
+                    for (const dora of action.doras.slice(seenDoraCount)) {
+                        this.addVisibleTile(dora, visibleTileCounts)
+                    }
+                    seenDoraCount = action.doras.length
+                }
+
+                if (action.seat === targetSeat) {
+                    const idx = currentHand.indexOf('4z')
+                    if (idx !== -1) {
+                        currentHand.splice(idx, 1)
+                    }
+                }
+                this.addVisibleTile('4z', visibleTileCounts)
             } else if (action.type === 'RecordHule') {
                 for (const h of action.hules) {
                     const delta = h.deltaScores[targetSeat] ?? 0

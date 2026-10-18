@@ -463,6 +463,58 @@ test('CoachingAdvisor - analyzeRound: 3P RecordBaBei removes 4z and maintains va
     assert.ok(Array.isArray(mistakes))
 })
 
+test('CoachingAdvisor - analyzeRound: 3P RecordBaBei updates visibleCounts with newly revealed doras and prevents double-counting', () => {
+    const advisor = new CoachingAdvisor()
+
+    // Seat 0 starts with Tenpai hand waiting on 1s and 4s (ryanmen wait):
+    // 123p 456p 789s 11z 23s (13 tiles).
+    // Opponent Seat 1 declares Kita (RecordBaBei) which flips '1s' as a new dora indicator (doras: ['1s']).
+    // Seat 0 then draws isolated 9m, but makes a SHANTEN_RETREAT mistake by discarding 2s instead of 9m.
+    // The optimal discard is 9m, leaving the 1s/4s wait.
+    // With 1s revealed as a dora indicator in RecordBaBei, remaining 1s is 3 copies (instead of 4),
+    // so optimalUkeire should accurately reflect 7 (3 copies of 1s + 4 copies of 4s).
+    // Furthermore, a subsequent RecordDiscardTile repeating doras: ['1s'] should not double-decrement ukeire.
+    const roundRecord: MajsoulRoundRecord = {
+        header: {
+            type: 'RecordNewRound',
+            chang: 0,
+            ju: 0,
+            ben: 0,
+            liqi: 0,
+            scores: [35000, 35000, 35000, 0],
+            dora: '9p',
+            hands: [
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7s', '8s', '9s', '1z', '1z', '2s', '3s'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7s', '8s', '9s', '1z', '1z', '2s', '4z'],
+                ['1p', '2p', '3p', '4p', '5p', '6p', '7s', '8s', '9s', '1z', '1z', '2s', '3s'],
+                []
+            ]
+        },
+        actions: [
+            // Seat 1 calls Kita with new dora indicator '1s'
+            { type: 'RecordBaBei', seat: 1, isMoqie: false, doras: ['1s'] },
+            // Seat 1 draws replacement tile and discards it, carrying doras: ['1s']
+            { type: 'RecordDealTile', seat: 1, tile: '5s' },
+            { type: 'RecordDiscardTile', seat: 1, tile: '5s', isMoqie: true, isLiqi: false, doras: ['1s'] },
+            // Seat 0 draws 9m
+            { type: 'RecordDealTile', seat: 0, tile: '9m' },
+            // Seat 0 discards 2s (shanten retreat from 0 to 1)
+            { type: 'RecordDiscardTile', seat: 0, tile: '2s', isMoqie: false, isLiqi: false },
+            { type: 'RecordNoTile', tenpaiSeats: [], deltaScores: [0, 0, 0, 0] }
+        ]
+    }
+
+    const mistakes = advisor.analyzeRound(roundRecord, 0, 0, true)
+    assert.strictEqual(mistakes.length, 1)
+
+    const mistake = mistakes[0]
+    assert.ok(mistake)
+    assert.strictEqual(mistake.mistakeCategory, 'SHANTEN_RETREAT')
+    assert.strictEqual(mistake.optimalTile, '9m')
+    // optimalUkeire must be 7 (3 copies of 1s + 4 copies of 4s), NOT 8 (which would happen if dora was ignored)
+    assert.strictEqual(mistake.optimalUkeire, 7)
+})
+
 test('CoachingAdvisor - analyzeGame: generates GameCoachingReport capping top 3 mistakes', () => {
     const advisor = new CoachingAdvisor()
 
