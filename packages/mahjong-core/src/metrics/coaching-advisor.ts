@@ -1,4 +1,10 @@
-import { SeatIndex, PerformanceQuadrant } from '@mahjong-sensei/types'
+import {
+    SeatIndex,
+    PerformanceQuadrant,
+    MistakeCategory,
+    CriticalMistakeHighlight,
+    GameCoachingReport
+} from '@mahjong-sensei/types'
 import { MajsoulGameRecord, MajsoulRoundRecord } from '../parser/types'
 import { ShantenCalculator } from '../shanten'
 import { MetricCalculator } from '../metrics'
@@ -6,35 +12,8 @@ import { LuckEvaluator } from './luck-evaluator'
 import { SkillEvaluator } from './skill-evaluator'
 import { TILE_NAMES } from '../tiles'
 
-export type MistakeCategory =
-    | 'SHANTEN_RETREAT'
-    | 'UKEIRE_LOSS'
-    | 'RECKLESS_PUSH_DEAL_IN'
-    | 'DANGEROUS_MUSUJI_PUSH'
+export type { MistakeCategory, CriticalMistakeHighlight, GameCoachingReport }
 
-export interface CriticalMistakeHighlight {
-    readonly roundIndex: number
-    readonly turnNumber: number
-    readonly discardedTile: string
-    readonly optimalTile: string
-    readonly prevShanten: number
-    readonly afterShanten: number
-    readonly optimalUkeire: number
-    readonly actualUkeire: number
-    readonly mistakeCategory: MistakeCategory
-    readonly severityScore: number
-    readonly coachingMessageKo: string
-}
-
-export interface GameCoachingReport {
-    readonly gameId: string
-    readonly targetSeat: number
-    readonly is3P: boolean
-    readonly quadrant: PerformanceQuadrant
-    readonly criticalMistakes: readonly CriticalMistakeHighlight[]
-    readonly overallSummaryKo: string
-    readonly actionableAdviceKo: readonly string[]
-}
 
 export interface OptimalDiscardResult {
     readonly tile: string

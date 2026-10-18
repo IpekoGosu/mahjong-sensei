@@ -5,7 +5,8 @@ import {
     GameMode,
     RollingWindowSize,
     RollingWindowStats,
-    PerformanceQuadrant
+    PerformanceQuadrant,
+    GameCoachingReport
 } from '@mahjong-sensei/types'
 import {
     TrendingUp,
@@ -20,8 +21,15 @@ import {
     Flame,
     FileText,
     HelpCircle,
-    Clock
+    Clock,
+    Share2,
+    Upload,
+    X,
+    Check,
+    AlertCircle
 } from 'lucide-react'
+import { TierBenchmarkShareCard } from '../components/TierBenchmarkShareCard'
+
 import {
     LineChart,
     Line,
@@ -48,7 +56,15 @@ export default function DashboardPage(): React.ReactElement {
     const [syncing, setSyncing] = useState<boolean>(false)
     const [importing, setImporting] = useState<boolean>(false)
     const [statusMessage, setStatusMessage] = useState<string>('')
+    const [shareCardOpen, setShareCardOpen] = useState<boolean>(false)
+    const [coachingGameId, setCoachingGameId] = useState<string | null>(null)
+    const [coachingReport, setCoachingReport] = useState<GameCoachingReport | null>(null)
+    const [coachingLoading, setCoachingLoading] = useState<boolean>(false)
+    const [coachingError, setCoachingError] = useState<string | null>(null)
+    const [importTab, setImportTab] = useState<'batch' | 'file'>('batch')
+    const [selectedFile, setSelectedFile] = useState<File | null>(null)
     const [, startTransition] = useTransition()
+
 
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 
@@ -178,7 +194,117 @@ export default function DashboardPage(): React.ReactElement {
         }
     }
 
+    /*_ GEMINI THINKING _*/
+    const handleFileUpload = async (): Promise<void> => {
+        if (!selectedFile) {
+            return
+        }
+
+        setImporting(true)
+        setStatusMessage(`파일 업로드 및 패보 디코딩 중... (${selectedFile.name})`)
+
+        try {
+            const isJson = selectedFile.name.toLowerCase().endsWith('.json')
+            let content = ''
+            let format: 'json' | 'base64' = 'json'
+
+            if (isJson) {
+                content = await selectedFile.text()
+                format = 'json'
+            } else {
+                content = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader()
+                    reader.onload = () => {
+                        const result = reader.result
+                        if (typeof result === 'string') {
+                            const base64Data = result.split(',')[1] ?? ''
+                            resolve(base64Data)
+                        } else {
+                            reject(new Error('파일 인코딩 실패'))
+                        }
+                    }
+                    reader.onerror = () => reject(reader.error)
+                    reader.readAsDataURL(selectedFile)
+                })
+                format = 'base64'
+            }
+
+            const res = await fetch(`${apiUrl}/paipu/upload`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content, format })
+            })
+
+            if (res.ok) {
+                const data = (await res.json()) as { readonly success: boolean; readonly gameId: string }
+                setStatusMessage(`✅ 파일 패보(${data.gameId})가 성공적으로 디코딩 및 등록되었습니다!`)
+                setSelectedFile(null)
+                setBatchModalOpen(false)
+                fetchStats(accountId, windowSize, gameMode)
+            } else {
+                const errData = (await res.json().catch(() => null)) as { readonly message?: string } | null
+                setStatusMessage(`⚠️ 패보 업로드 실패: ${errData?.message ?? '형식이 올바르지 않습니다.'}`)
+            }
+        } catch {
+            setStatusMessage('⚠️ 패보 파일 처리 중 오류가 발생했습니다.')
+        } finally {
+            setImporting(false)
+        }
+    }
+
+    const handleOpenCoaching = async (gameId: string): Promise<void> => {
+        setCoachingGameId(gameId)
+        setCoachingLoading(true)
+        setCoachingError(null)
+        setCoachingReport(null)
+
+        try {
+            const res = await fetch(`${apiUrl}/analysis/coaching/${gameId}?accountId=${accountId}`)
+            if (res.ok) {
+                const data = (await res.json()) as GameCoachingReport
+                setCoachingReport(data)
+            } else {
+                setCoachingError('해당 대국의 코칭 리포트를 불러오지 못했습니다.')
+            }
+        } catch {
+            setCoachingError('백엔드 API 서버와 통신할 수 없습니다.')
+        } finally {
+            setCoachingLoading(false)
+        }
+    }
+
+    const getMistakeCategoryBadge = (category: string): { readonly label: string; readonly badgeClass: string } => {
+        switch (category) {
+            case 'RECKLESS_PUSH_DEAL_IN':
+                return {
+                    label: '🚨 무리한 승부 (방총 직격)',
+                    badgeClass: 'bg-rose-500/20 text-rose-400 border-rose-500/30'
+                }
+            case 'DANGEROUS_MUSUJI_PUSH':
+                return {
+                    label: '⚠️ 위험한 무스지 승부 타패',
+                    badgeClass: 'bg-orange-500/20 text-orange-400 border-orange-500/30'
+                }
+            case 'UKEIRE_LOSS':
+                return {
+                    label: '📉 유효패 손실 (조패 비효율)',
+                    badgeClass: 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                }
+            case 'SHANTEN_RETREAT':
+                return {
+                    label: '↩️ 샹텐수 후퇴 타패',
+                    badgeClass: 'bg-purple-500/20 text-purple-400 border-purple-500/30'
+                }
+            default:
+                return {
+                    label: category,
+                    badgeClass: 'bg-slate-700 text-slate-300 border-slate-600'
+                }
+        }
+    }
+
     // Default stats fallback tuned by actual recent 50 games from Amae-Koromo
+
     const currentStats: RollingWindowStats = stats ?? (
         gameMode === '3p'
             ? {
@@ -395,9 +521,18 @@ export default function DashboardPage(): React.ReactElement {
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-sm font-semibold transition-all cursor-pointer"
                     >
                         <FileText className="w-4 h-4 text-amber-400" />
-                        일괄 등록
+                        패보 일괄 / 파일 등록
+                    </button>
+
+                    <button
+                        onClick={() => setShareCardOpen(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-lg text-sm font-semibold transition-all cursor-pointer shadow-sm"
+                    >
+                        <Share2 className="w-4 h-4 text-purple-200" />
+                        SNS 공유 카드
                     </button>
                 </div>
+
             </header>
 
             {statusMessage && (
@@ -713,6 +848,13 @@ export default function DashboardPage(): React.ReactElement {
                                         <span className="text-slate-500 text-xs block">화료/방총</span>
                                         <span className="font-semibold text-slate-300">{game.winCount} / {game.dealInCount}</span>
                                     </div>
+                                    <button
+                                        onClick={() => handleOpenCoaching(game.gameId)}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap"
+                                    >
+                                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                                        AI 코칭
+                                    </button>
                                 </div>
                             </div>
                         ))
@@ -720,52 +862,296 @@ export default function DashboardPage(): React.ReactElement {
                 </div>
             </section>
 
-            {/* Batch Import Modal */}
+            {/* Batch & File Upload Modal */}
             {batchModalOpen && (
                 <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50 p-4">
                     <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 space-y-4 shadow-2xl">
                         <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                             <h3 className="text-lg font-bold text-white flex items-center gap-2">
                                 <FileText className="w-5 h-5 text-amber-500" />
-                                실제 작혼 패보 일괄 등록
+                                실제 작혼 패보 등록 & 업로드
                             </h3>
                             <button
                                 onClick={() => setBatchModalOpen(false)}
                                 className="text-slate-400 hover:text-white text-sm cursor-pointer"
                             >
-                                닫기
+                                ✕
                             </button>
                         </div>
-                        <p className="text-xs text-slate-400 leading-relaxed">
-                            작혼 인게임 [패보] 메뉴에서 최근 대국의 링크 또는 UUID를 한 줄에 하나씩 붙여넣으세요.
-                            (예: <code>241015-xxxx-xxxx-...</code>)
-                        </p>
-                        <textarea
-                            rows={8}
-                            placeholder="https://mahjongsoul.game.yo-star.com/?paipu=241015-xxxx&#10;241014-yyyy-yyyy...&#10;241013-zzzz-zzzz..."
-                            value={batchInput}
-                            onChange={(e) => setBatchInput(e.target.value)}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm font-mono text-slate-200 focus:outline-none focus:border-amber-500 resize-none"
+
+                        {/* Tabs: Text Batch vs File Upload */}
+                        <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+                            <button
+                                onClick={() => setImportTab('batch')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                                    importTab === 'batch'
+                                        ? 'bg-amber-600 text-white font-bold'
+                                        : 'text-slate-400 hover:text-slate-200'
+                                }`}
+                            >
+                                링크 / UUID 일괄 입력
+                            </button>
+                            <button
+                                onClick={() => setImportTab('file')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                                    importTab === 'file'
+                                        ? 'bg-amber-600 text-white font-bold'
+                                        : 'text-slate-400 hover:text-slate-200'
+                                }`}
+                            >
+                                <Upload className="w-3.5 h-3.5" />
+                                파일 업로드 (.json / .pb)
+                            </button>
+                        </div>
+
+                        {importTab === 'batch' ? (
+                            <>
+                                <p className="text-xs text-slate-400 leading-relaxed">
+                                    작혼 인게임 [패보] 메뉴에서 최근 대국의 링크 또는 UUID를 한 줄에 하나씩 붙여넣으세요.
+                                    (예: <code>241015-xxxx-xxxx-...</code>)
+                                </p>
+                                <textarea
+                                    rows={8}
+                                    placeholder="https://mahjongsoul.game.yo-star.com/?paipu=241015-xxxx&#10;241014-yyyy-yyyy...&#10;241013-zzzz-zzzz..."
+                                    value={batchInput}
+                                    onChange={(e) => setBatchInput(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm font-mono text-slate-200 focus:outline-none focus:border-amber-500 resize-none"
+                                />
+                                <div className="flex items-center justify-end gap-3 pt-2">
+                                    <button
+                                        onClick={() => setBatchModalOpen(false)}
+                                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                                    >
+                                        취소
+                                    </button>
+                                    <button
+                                        onClick={handleBatchImport}
+                                        disabled={importing || !batchInput.trim()}
+                                        className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-semibold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2"
+                                    >
+                                        {importing && <RotateCw className="w-4 h-4 animate-spin" />}
+                                        일괄 분석 & 등록
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <div className="space-y-4">
+                                <p className="text-xs text-slate-400 leading-relaxed">
+                                    작혼 웹/모바일 클라이언트에서 추출한 JSON 패보 파일 또는 Protobuf(.pb) 바이너리 파일을 직접 업로드하세요.
+                                </p>
+                                <label className="border-2 border-dashed border-slate-700 hover:border-amber-500/80 rounded-xl p-6 flex flex-col items-center justify-center gap-3 cursor-pointer transition-colors bg-slate-950/50">
+                                    <Upload className="w-8 h-8 text-amber-400" />
+                                    <span className="text-sm font-medium text-slate-200">
+                                        {selectedFile ? selectedFile.name : '클릭하여 파일 선택 또는 파일 드래그'}
+                                    </span>
+                                    <span className="text-xs text-slate-500">
+                                        지원 형식: .json, .pb, .bin (최대 10MB)
+                                    </span>
+                                    <input
+                                        type="file"
+                                        accept=".json,.pb,.bin"
+                                        className="hidden"
+                                        onChange={(e) => {
+                                            const file = e.target.files?.[0]
+                                            if (file) {
+                                                setSelectedFile(file)
+                                            }
+                                        }}
+                                    />
+                                </label>
+                                <div className="flex items-center justify-end gap-3 pt-2">
+                                    <button
+                                        onClick={() => {
+                                            setSelectedFile(null)
+                                            setBatchModalOpen(false)
+                                        }}
+                                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                                    >
+                                        취소
+                                    </button>
+                                    <button
+                                        onClick={handleFileUpload}
+                                        disabled={importing || !selectedFile}
+                                        className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-semibold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2"
+                                    >
+                                        {importing && <RotateCw className="w-4 h-4 animate-spin" />}
+                                        패보 디코딩 & 등록
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* AI Coaching Report Modal */}
+            {coachingGameId && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-3xl w-full p-6 space-y-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+                        <div className="flex items-center justify-between pb-4 border-b border-slate-800">
+                            <div>
+                                <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                                    <Sparkles className="w-5 h-5 text-amber-400" />
+                                    AI 틸트 & 코칭 리포트
+                                </h3>
+                                <p className="text-xs text-slate-400 font-mono mt-1">대국 ID: {coachingGameId}</p>
+                            </div>
+                            <button
+                                onClick={() => {
+                                    setCoachingGameId(null)
+                                    setCoachingReport(null)
+                                }}
+                                className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-300 hover:text-white transition-colors cursor-pointer"
+                            >
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+
+                        {coachingLoading && (
+                            <div className="py-16 flex flex-col items-center justify-center gap-3">
+                                <RotateCw className="w-8 h-8 text-amber-400 animate-spin" />
+                                <p className="text-sm text-slate-300 font-medium">AI 엔진이 대국 내 모든 타패와 샹텐수, 수비 안전도를 정밀 분석 중입니다...</p>
+                            </div>
+                        )}
+
+                        {coachingError && (
+                            <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-300 text-sm flex items-center gap-3">
+                                <AlertCircle className="w-5 h-5 shrink-0" />
+                                <span>{coachingError}</span>
+                            </div>
+                        )}
+
+                        {coachingReport && (
+                            <div className="space-y-6">
+                                {/* Report Summary & Badges */}
+                                <div className="p-4 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-2">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-xs text-slate-400 font-semibold tracking-wider uppercase">대국 종합 진단</span>
+                                        <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                            {coachingReport.is3P ? '3인 마작' : '4인 마작'}
+                                        </span>
+                                    </div>
+                                    <p className="text-sm text-slate-200 leading-relaxed font-medium">
+                                        "{coachingReport.overallSummaryKo}"
+                                    </p>
+                                </div>
+
+                                {/* Actionable Advice Checklist */}
+                                {coachingReport.actionableAdviceKo.length > 0 && (
+                                    <div className="space-y-2">
+                                        <h4 className="text-sm font-bold text-amber-400 flex items-center gap-1.5">
+                                            <Award className="w-4 h-4" />
+                                            핵심 실력 개선 가이드
+                                        </h4>
+                                        <div className="space-y-2">
+                                            {coachingReport.actionableAdviceKo.map((advice, idx) => (
+                                                <div key={idx} className="flex items-start gap-2.5 p-3 rounded-lg bg-slate-950/60 border border-slate-800 text-xs text-slate-300 leading-relaxed">
+                                                    <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                                                    <span>{advice}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Critical Mistakes List */}
+                                <div className="space-y-3">
+                                    <h4 className="text-sm font-bold text-white flex items-center gap-1.5">
+                                        <ShieldAlert className="w-4 h-4 text-rose-400" />
+                                        치명적 실수 하이라이트 (Top {coachingReport.criticalMistakes.length})
+                                    </h4>
+
+                                    {coachingReport.criticalMistakes.length === 0 ? (
+                                        <div className="p-6 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-center space-y-1">
+                                            <p className="text-sm font-bold text-emerald-300">🎉 치명적인 실수가 발견되지 않았습니다!</p>
+                                            <p className="text-xs text-slate-400">모범적인 패효율과 공수 밸런스로 완벽한 타패를 유지했습니다.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            {coachingReport.criticalMistakes.map((mistake, idx) => {
+                                                const badgeInfo = getMistakeCategoryBadge(mistake.mistakeCategory)
+                                                return (
+                                                    <div key={idx} className="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-3">
+                                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${badgeInfo.badgeClass}`}>
+                                                                    {badgeInfo.label}
+                                                                </span>
+                                                                <span className="text-xs text-slate-400 font-medium">
+                                                                    동{mistake.roundIndex + 1}국 · {mistake.turnNumber}순
+                                                                </span>
+                                                            </div>
+                                                            <span className="text-xs font-mono text-rose-400 font-bold">
+                                                                실수 심각도 {mistake.severityScore}/100
+                                                            </span>
+                                                        </div>
+
+                                                        {/* Tile Comparison */}
+                                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                            <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 space-y-1">
+                                                                <span className="text-[11px] text-rose-300 font-semibold block">내가 버린 패</span>
+                                                                <div className="flex items-baseline gap-2">
+                                                                    <span className="text-lg font-mono font-bold text-white">[{mistake.discardedTile}]</span>
+                                                                    <span className="text-xs text-slate-400">유효패 {mistake.actualUkeire}장</span>
+                                                                </div>
+                                                                <div className="text-[11px] text-slate-500">
+                                                                    샹텐수: {mistake.prevShanten} ➔ {mistake.afterShanten}
+                                                                </div>
+                                                            </div>
+
+                                                            <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 space-y-1">
+                                                                <span className="text-[11px] text-emerald-300 font-semibold block">AI 최적 추천패</span>
+                                                                <div className="flex items-baseline gap-2">
+                                                                    <span className="text-lg font-mono font-bold text-emerald-300">[{mistake.optimalTile}]</span>
+                                                                    <span className="text-xs text-emerald-400">유효패 {mistake.optimalUkeire}장</span>
+                                                                </div>
+                                                                <div className="text-[11px] text-slate-500">
+                                                                    최대 유효패 및 방어 안전 확보
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Feedback Message */}
+                                                        <p className="text-xs text-slate-300 leading-relaxed font-sans bg-slate-900/80 p-3 rounded-lg border border-slate-800/80">
+                                                            {mistake.coachingMessageKo}
+                                                        </p>
+                                                    </div>
+                                                )
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* SNS Share Card Modal */}
+            {shareCardOpen && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="relative max-w-xl w-full">
+                        <button
+                            onClick={() => setShareCardOpen(false)}
+                            className="absolute -top-3 -right-3 z-10 w-8 h-8 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center shadow-lg cursor-pointer border border-slate-700"
+                        >
+                            <X className="w-4 h-4" />
+                        </button>
+                        <TierBenchmarkShareCard
+                            nickname={nickname}
+                            mode={gameMode}
+                            luckScore={currentStats.averageLuckScore}
+                            skillScore={currentStats.averageSkillScore}
+                            winRate={currentStats.winRate ?? 22.0}
+                            dealInRate={currentStats.dealInRate ?? 13.0}
+                            quadrant={currentStats.games[0]?.quadrant ?? 'SKILLFUL_WIN'}
+                            currentTier={gameMode === '3p' ? '작걸' : '작호'}
+                            apiUrl={apiUrl}
                         />
-                        <div className="flex items-center justify-end gap-3 pt-2">
-                            <button
-                                onClick={() => setBatchModalOpen(false)}
-                                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors cursor-pointer"
-                            >
-                                취소
-                            </button>
-                            <button
-                                onClick={handleBatchImport}
-                                disabled={importing || !batchInput.trim()}
-                                className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-semibold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2"
-                            >
-                                {importing && <RotateCw className="w-4 h-4 animate-spin" />}
-                                일괄 분석 & 등록
-                            </button>
-                        </div>
                     </div>
                 </div>
             )}
         </main>
     )
 }
+
