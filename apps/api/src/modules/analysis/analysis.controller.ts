@@ -61,10 +61,9 @@ export class AnalysisController {
     @Get('coaching/:gameId')
     public async getCoaching(
         @Param('gameId') gameId: string,
-        @Query('accountId') accountId?: string
+        @Query('accountId', new ParseIntPipe({ optional: true })) accountId?: number
     ): Promise<GameCoachingReport> {
-        const parsedAccountId = accountId ? parseInt(accountId, 10) : undefined
-        return await this.analysisService.getCoachingReport(gameId, parsedAccountId)
+        return await this.analysisService.getCoachingReport(gameId, accountId)
     }
 }
 

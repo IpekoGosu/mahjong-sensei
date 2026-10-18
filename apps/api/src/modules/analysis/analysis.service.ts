@@ -384,7 +384,10 @@ export class AnalysisService {
         let targetSeat: SeatIndex = 0
         if (accountId !== undefined) {
             const participant = game.participants.find((p) => p.player.accountId === accountId)
-            if (participant && (participant.seat === 0 || participant.seat === 1 || participant.seat === 2 || participant.seat === 3)) {
+            if (!participant) {
+                throw new NotFoundException(`대국 ID ${gameId}에서 계정 ID ${accountId} 플레이어의 참가 기록을 찾을 수 없습니다.`)
+            }
+            if (participant.seat === 0 || participant.seat === 1 || participant.seat === 2 || participant.seat === 3) {
                 targetSeat = participant.seat
             }
         } else if (game.participants[0] && (game.participants[0].seat === 0 || game.participants[0].seat === 1 || game.participants[0].seat === 2 || game.participants[0].seat === 3)) {
@@ -486,10 +489,11 @@ export class AnalysisService {
                 })
             } else if (metric.startShanten >= 4 && metric.tileEfficiency < 0.85) {
                 const category: MistakeCategory = 'SHANTEN_RETREAT'
+                const retreatTile = is3P ? '3s' : '3m'
                 mistakes.push({
                     roundIndex: round.roundIndex,
                     turnNumber: 4,
-                    discardedTile: '3m',
+                    discardedTile: retreatTile,
                     optimalTile: '1z',
                     prevShanten: 1,
                     afterShanten: 2,
@@ -497,7 +501,7 @@ export class AnalysisService {
                     actualUkeire: 4,
                     mistakeCategory: category,
                     severityScore: 60,
-                    coachingMessageKo: `[${round.roundIndex + 1}국] 악배패 상태에서 조패 불균형으로 인해 샹텐수가 후퇴하는 타패 [3m]를 선택했습니다. 안전한 자패를 먼저 털며 타점을 가늠하는 것이 바람직했습니다.`
+                    coachingMessageKo: `[${round.roundIndex + 1}국] 악배패 상태에서 조패 불균형으로 인해 샹텐수가 후퇴하는 타패 [${retreatTile}]를 선택했습니다. 안전한 자패를 먼저 털며 타점을 가늠하는 것이 바람직했습니다.`
                 })
             }
         }

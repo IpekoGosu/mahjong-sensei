@@ -168,7 +168,7 @@ export interface CriticalMistakeHighlight {
 
 export interface GameCoachingReport {
     readonly gameId: string
-    readonly targetSeat: number
+    readonly targetSeat: SeatIndex
     readonly is3P: boolean
     readonly quadrant: PerformanceQuadrant
     readonly criticalMistakes: readonly CriticalMistakeHighlight[]

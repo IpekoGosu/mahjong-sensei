@@ -204,7 +204,7 @@ export default function DashboardPage(): React.ReactElement {
         setStatusMessage(`파일 업로드 및 패보 디코딩 중... (${selectedFile.name})`)
 
         try {
-            const isJson = selectedFile.name.endsWith('.json')
+            const isJson = selectedFile.name.toLowerCase().endsWith('.json')
             let content = ''
             let format: 'json' | 'base64' = 'json'
 
@@ -212,14 +212,20 @@ export default function DashboardPage(): React.ReactElement {
                 content = await selectedFile.text()
                 format = 'json'
             } else {
-                const arrayBuffer = await selectedFile.arrayBuffer()
-                const bytes = new Uint8Array(arrayBuffer)
-                let binary = ''
-                const len = bytes.byteLength
-                for (let i = 0; i < len; i++) {
-                    binary += String.fromCharCode(bytes[i] ?? 0)
-                }
-                content = btoa(binary)
+                content = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader()
+                    reader.onload = () => {
+                        const result = reader.result
+                        if (typeof result === 'string') {
+                            const base64Data = result.split(',')[1] ?? ''
+                            resolve(base64Data)
+                        } else {
+                            reject(new Error('파일 인코딩 실패'))
+                        }
+                    }
+                    reader.onerror = () => reject(reader.error)
+                    reader.readAsDataURL(selectedFile)
+                })
                 format = 'base64'
             }
 

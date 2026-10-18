@@ -166,14 +166,24 @@ export class PaipuService {
             }
         } else {
             try {
-                record = JSON.parse(trimmed) as MajsoulGameRecord
-            } catch {
+                const parsed: MajsoulGameRecord | null = JSON.parse(trimmed) as MajsoulGameRecord | null
+                if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                    throw new BadRequestException('패보 JSON 데이터의 루트는 객체 형태여야 합니다.')
+                }
+                if (
+                    typeof parsed.uuid !== 'string' ||
+                    !Array.isArray(parsed.players) ||
+                    !Array.isArray(parsed.rounds)
+                ) {
+                    throw new BadRequestException('패보 데이터에 필수 필드(uuid, players, rounds)가 누락되었거나 형식이 올바르지 않습니다.')
+                }
+                record = parsed
+            } catch (err) {
+                if (err instanceof BadRequestException) {
+                    throw err
+                }
                 throw new BadRequestException('유효하지 않은 JSON 패보 데이터입니다.')
             }
-        }
-
-        if (!record.uuid || !record.players || !record.rounds) {
-            throw new BadRequestException('패보 데이터에 필수 필드(uuid, players, rounds)가 누락되었습니다.')
         }
 
         return await this.saveGameRecord(record)

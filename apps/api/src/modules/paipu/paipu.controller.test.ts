@@ -208,13 +208,15 @@ test('PaipuController - controller level validation', async () => {
     assert.strictEqual(fastPathBatchRes.total, 1)
     assert.strictEqual(fastPathBatchRes.gameIds[0], 'batch-uuid-fast-path')
 
-    // Controller upload validation
-    await assert.rejects(
-        async () => await controller.upload({ content: '' }),
+    // Controller upload validation via UploadPaipuPipe
+    const uploadPipe = new UploadPaipuPipe()
+    assert.throws(
+        () => uploadPipe.transform({ content: '' }),
         BadRequestException
     )
 
-    const uploadRes = await controller.upload({ content: '{"uuid":"test"}', format: 'json' })
+    const validUploadDto = uploadPipe.transform({ content: '{"uuid":"test"}', format: 'json' })
+    const uploadRes = await controller.upload(validUploadDto)
     assert.strictEqual(uploadRes.success, true)
     assert.strictEqual(uploadRes.gameId, 'uploaded-game-uuid')
 })

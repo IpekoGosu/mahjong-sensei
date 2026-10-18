@@ -2,7 +2,7 @@ import { Controller, Post, Get, Body, Param } from '@nestjs/common'
 import { PaipuService } from './paipu.service'
 import { ImportPaipuDto, ImportPaipuPipe } from './dto/import-paipu.dto'
 import { ImportBatchPaipuDto, ImportBatchPaipuPipe } from './dto/import-batch-paipu.dto'
-import { UploadPaipuDto, UploadPaipuPipe, UploadPaipuRawInput } from './dto/upload-paipu.dto'
+import { UploadPaipuDto, UploadPaipuPipe } from './dto/upload-paipu.dto'
 import { PaipuDetail } from '@mahjong-sensei/types'
 
 @Controller('paipu')
@@ -20,13 +20,12 @@ export class PaipuController {
     }
 
     @Post('upload')
-    public async upload(@Body(new UploadPaipuPipe()) dto: UploadPaipuRawInput): Promise<{
+    public async upload(@Body(new UploadPaipuPipe()) dto: UploadPaipuDto): Promise<{
         readonly success: boolean
         readonly gameId: string
     }> {
         /*_ GEMINI THINKING _*/
-        const validated = UploadPaipuDto.validate(dto)
-        return await this.paipuService.importRawPaipu(validated.content, validated.format)
+        return await this.paipuService.importRawPaipu(dto.content, dto.format)
     }
 
 
