@@ -193,7 +193,22 @@ export default function DashboardPage(): React.ReactElement {
                 averageSkillScore: 52.0,
                 luckTrend: [45, 38, 48, 52, 40, 42, 35, 47, 49, 44],
                 rankTrend: [2, 3, 2, 1, 3, 2, 3, 1, 2, 3],
-                games: []
+                games: [],
+                winRate: 29.3,
+                dealInRate: 13.8,
+                riichiRate: 25.0,
+                furoRate: 23.1,
+                damatenRate: 19.2,
+                initiativeRate: 81.0,
+                uradoraRate: 43.2,
+                styleDiagnosis: {
+                    title: '카운터 다마텐 & 철벽 수비',
+                    description: '다마텐율 19.2%와 선제율 81%로 상대를 침착하게 공략하며, 들통율이 3.7%에 불과합니다.',
+                    attackType: '카운터 다마텐',
+                    defenseType: '철벽 수비',
+                    luckRemark: '도라 편중 호조',
+                    skillRemark: '3마 상위 5% 철벽 수비'
+                }
             }
             : {
                 windowSize,
@@ -207,7 +222,22 @@ export default function DashboardPage(): React.ReactElement {
                 averageSkillScore: 68.0,
                 luckTrend: [48, 52, 45, 50, 47, 51, 46, 53, 49, 48],
                 rankTrend: [2, 1, 3, 2, 4, 1, 2, 2, 3, 4],
-                games: []
+                games: [],
+                winRate: 22.0,
+                dealInRate: 12.2,
+                riichiRate: 22.5,
+                furoRate: 27.6,
+                damatenRate: 14.5,
+                initiativeRate: 85.0,
+                uradoraRate: 27.8,
+                styleDiagnosis: {
+                    title: '단단한 멘젠 선제형',
+                    description: '후로율 27.6%와 선제 리치율 85%의 강한 공격력으로 연대율 56%를 견인하고 있습니다.',
+                    attackType: '단단한 멘젠 선제',
+                    defenseType: '안정 수비',
+                    luckRemark: '정직한 승부',
+                    skillRemark: '상위 15% 방총 제어'
+                }
             }
     )
 
@@ -449,11 +479,9 @@ export default function DashboardPage(): React.ReactElement {
                         {currentStats.averageLuckScore} <span className="text-sm font-normal text-slate-400">/ 100</span>
                     </div>
                     <div className="mt-2 text-xs text-slate-400">
-                        {gameMode === '3p' ? (
-                            <span className="text-purple-300 font-medium">우라도라율 43.2% (도라 편중 호조)</span>
-                        ) : (
-                            <span className="text-amber-400 font-medium">우라도라율 27.8% (정직한 승부)</span>
-                        )}
+                        <span className={currentStats.averageLuckScore >= 50 ? 'text-purple-300 font-medium' : 'text-amber-400 font-medium'}>
+                            우라도라율 {currentStats.uradoraRate ?? 0}% ({currentStats.styleDiagnosis?.luckRemark ?? '정직한 승부'})
+                        </span>
                     </div>
                 </div>
 
@@ -466,11 +494,9 @@ export default function DashboardPage(): React.ReactElement {
                         {currentStats.averageSkillScore} <span className="text-sm font-normal text-slate-400">/ 100</span>
                     </div>
                     <div className="mt-2 text-xs text-slate-400">
-                        {gameMode === '3p' ? (
-                            <span className="text-emerald-400 font-medium">방총율 13.8% (3마 상위 5% 철벽 수비)</span>
-                        ) : (
-                            <span className="text-emerald-400 font-medium">방총율 12.2% (상위 15% 방총 제어)</span>
-                        )}
+                        <span className="text-emerald-400 font-medium">
+                            방총율 {currentStats.dealInRate ?? 0}% ({currentStats.styleDiagnosis?.skillRemark ?? '방총 제어'})
+                        </span>
                     </div>
                 </div>
 
@@ -480,12 +506,10 @@ export default function DashboardPage(): React.ReactElement {
                         <ShieldAlert className="w-4 h-4 text-amber-400" />
                     </div>
                     <div className="text-lg font-bold text-amber-300">
-                        {gameMode === '3p' ? '카운터 다마텐 & 철벽 수비' : '단단한 멘젠 선제형'}
+                        {currentStats.styleDiagnosis?.title ?? '스타일 분석 중'}
                     </div>
                     <p className="mt-1 text-xs text-slate-400 leading-relaxed">
-                        {gameMode === '3p'
-                            ? '다마텐율 19.2%와 선제율 81%로 상대를 침착하게 공략하며, 들통율이 3.7%에 불과합니다.'
-                            : '후로율 27.6%와 선제 리치율 85%의 강한 공격력으로 연대율 56%를 견인하고 있습니다.'}
+                        {currentStats.styleDiagnosis?.description ?? '대국 데이터를 분석하여 유저의 고유 마작 스타일을 진단합니다.'}
                     </p>
                 </div>
             </section>

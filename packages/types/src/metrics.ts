@@ -58,6 +58,31 @@ export interface GameMetricSummary {
     readonly aiEvaluation?: AiEvaluationBreakdown
 }
 
+export interface StyleDiagnosis {
+    readonly title: string
+    readonly description: string
+    readonly attackType: string
+    readonly defenseType: string
+    readonly luckRemark?: string
+    readonly skillRemark?: string
+}
+
+export interface StyleEvaluationInput {
+    readonly gameMode: GameMode
+    readonly winRate: number
+    readonly dealInRate: number
+    readonly riichiRate: number
+    readonly furoRate: number
+    readonly damatenRate: number
+    readonly initiativeRate: number
+    readonly uradoraRate: number
+    readonly negativeRate?: number
+    readonly averageRank?: number
+    readonly topTwoRate?: number
+    readonly averageLuckScore?: number
+    readonly averageSkillScore?: number
+}
+
 export interface RollingWindowStats {
     readonly windowSize: RollingWindowSize
     readonly gameMode?: GameMode
@@ -71,6 +96,14 @@ export interface RollingWindowStats {
     readonly luckTrend: readonly number[]
     readonly rankTrend: readonly number[]
     readonly games: readonly GameMetricSummary[]
+    readonly winRate?: number
+    readonly dealInRate?: number
+    readonly riichiRate?: number
+    readonly furoRate?: number
+    readonly damatenRate?: number
+    readonly initiativeRate?: number
+    readonly uradoraRate?: number
+    readonly styleDiagnosis?: StyleDiagnosis
 }
 
 export type TierKey = 'NOVICE_ADEPT' | 'EXPERT' | 'MASTER' | 'SAINT'

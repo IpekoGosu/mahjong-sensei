@@ -78,6 +78,10 @@ model RoundMetric {
     luckScore      Float
     skillScore     Float
     isWin          Boolean @default(false)
+    isRiichi       Boolean @default(false)
+    isFuro         Boolean @default(false)
+    isDamaten      Boolean @default(false)
+    isInitiative   Boolean @default(false)
 
     round Round @relation(fields: [roundId], references: [id], onDelete: Cascade)
 

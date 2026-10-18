@@ -371,6 +371,180 @@ export class AmaeKoromoService {
         return specs
     }
 
+    /*_ GEMINI THINKING _*/
+    protected distributeRoundStyleMetrics(
+        gameSpecs: readonly DeterministicGameSpec[],
+        extStats: Partial<AmaeExtendedStats>,
+        mode: GameMode
+    ): readonly {
+        readonly isWin: boolean
+        readonly isDealIn: boolean
+        readonly dealInScore: number
+        readonly isRiichi: boolean
+        readonly isFuro: boolean
+        readonly isDamaten: boolean
+        readonly isInitiative: boolean
+        readonly uradoraHits: number
+    }[] {
+        const total = gameSpecs.length
+        if (total === 0) {
+            return []
+        }
+
+        const maxRank = mode === '3p' ? 3 : 4
+        const winRateTarget = extStats.和牌率 ?? (mode === '3p' ? 0.29 : 0.22)
+        const dealInRateTarget = extStats.放铳率 ?? (mode === '3p' ? 0.14 : 0.12)
+        const riichiRateTarget = extStats.立直率 ?? (mode === '3p' ? 0.25 : 0.20)
+        const furoRateTarget = extStats.副露率 ?? (mode === '3p' ? 0.23 : 0.28)
+        const damatenRateTarget = extStats.默听率 ?? (mode === '3p' ? 0.19 : 0.14)
+        const initiativeRateTarget = extStats.先制率 ?? 0.81
+        const uradoraRateTarget = extStats.里宝率 ?? (mode === '3p' ? 0.43 : 0.28)
+
+        const targetWinCount = Math.min(total, Math.max(0, Math.round(total * winRateTarget)))
+        const targetDealInCount = Math.min(total, Math.max(0, Math.round(total * dealInRateTarget)))
+        const targetRiichiCount = Math.min(total, Math.max(0, Math.round(total * riichiRateTarget)))
+        const targetFuroCount = Math.min(total, Math.max(0, Math.round(total * furoRateTarget)))
+        const targetInitiativeCount = Math.min(targetRiichiCount, Math.max(0, Math.round(targetRiichiCount * initiativeRateTarget)))
+        const targetDamaCount = Math.min(targetWinCount, Math.max(0, Math.round(targetWinCount * damatenRateTarget)))
+
+        // 1. Assign wins (rank 1 first, then rank 2, then rank 3)
+        const winIndices = new Set<number>()
+        const rank1Indices = gameSpecs.map((s, idx) => s.rank === 1 ? idx : -1).filter((i) => i !== -1)
+        const rank2Indices = gameSpecs.map((s, idx) => s.rank === 2 ? idx : -1).filter((i) => i !== -1)
+        const rank3Indices = gameSpecs.map((s, idx) => s.rank === 3 ? idx : -1).filter((i) => i !== -1)
+
+        for (const idx of rank1Indices) {
+            if (winIndices.size < targetWinCount) {
+                winIndices.add(idx)
+            }
+        }
+        for (const idx of rank2Indices) {
+            if (winIndices.size < targetWinCount) {
+                winIndices.add(idx)
+            }
+        }
+        for (const idx of rank3Indices) {
+            if (winIndices.size < targetWinCount) {
+                winIndices.add(idx)
+            }
+        }
+
+        // 2. Assign deal-ins (last rank first, then maxRank - 1)
+        const dealInIndices = new Set<number>()
+        const lastRankIndices = gameSpecs.map((s, idx) => s.rank === maxRank ? idx : -1).filter((i) => i !== -1)
+        const secondLastRankIndices = gameSpecs.map((s, idx) => s.rank === maxRank - 1 ? idx : -1).filter((i) => i !== -1)
+
+        for (const idx of lastRankIndices) {
+            if (dealInIndices.size < targetDealInCount && !winIndices.has(idx)) {
+                dealInIndices.add(idx)
+            }
+        }
+        for (const idx of secondLastRankIndices) {
+            if (dealInIndices.size < targetDealInCount && !winIndices.has(idx)) {
+                dealInIndices.add(idx)
+            }
+        }
+
+        // 3. Assign Riichi (prefer win games and high ranks, but not deal-in games)
+        const riichiIndices = new Set<number>()
+        const candidateRiichiIndices = [...winIndices, ...rank1Indices, ...rank2Indices]
+        for (const idx of candidateRiichiIndices) {
+            if (riichiIndices.size < targetRiichiCount && !dealInIndices.has(idx)) {
+                riichiIndices.add(idx)
+            }
+        }
+        let anyIdx = 0
+        while (riichiIndices.size < targetRiichiCount && anyIdx < total) {
+            if (!dealInIndices.has(anyIdx)) {
+                riichiIndices.add(anyIdx)
+            }
+            anyIdx++
+        }
+
+        // 4. Assign Initiative riichi (first targetInitiativeCount of riichiIndices)
+        const initiativeIndices = new Set<number>()
+        for (const idx of riichiIndices) {
+            if (initiativeIndices.size < targetInitiativeCount) {
+                initiativeIndices.add(idx)
+            }
+        }
+
+        // 5. Assign Damaten wins (wins that are NOT riichi)
+        const damatenIndices = new Set<number>()
+        const nonRiichiWins = [...winIndices].filter((idx) => !riichiIndices.has(idx))
+        for (const idx of nonRiichiWins) {
+            if (damatenIndices.size < targetDamaCount) {
+                damatenIndices.add(idx)
+            }
+        }
+        if (damatenIndices.size < targetDamaCount) {
+            for (const idx of winIndices) {
+                if (damatenIndices.size < targetDamaCount && !damatenIndices.has(idx)) {
+                    damatenIndices.add(idx)
+                    riichiIndices.delete(idx)
+                    initiativeIndices.delete(idx)
+                }
+            }
+        }
+
+        // 6. Assign Furo (cannot be riichi or damaten win)
+        const furoIndices = new Set<number>()
+        let furoCand = 0
+        while (furoIndices.size < targetFuroCount && furoCand < total) {
+            if (!riichiIndices.has(furoCand) && !damatenIndices.has(furoCand)) {
+                furoIndices.add(furoCand)
+            }
+            furoCand++
+        }
+
+        // 7. Assign Uradora hits (riichi wins)
+        const uradoraIndices = new Set<number>()
+        const riichiWins = [...winIndices].filter((idx) => riichiIndices.has(idx))
+        const targetUraCount = Math.min(riichiWins.length, Math.max(0, Math.round(riichiWins.length * uradoraRateTarget)))
+        for (const idx of riichiWins) {
+            if (uradoraIndices.size < targetUraCount) {
+                uradoraIndices.add(idx)
+            }
+        }
+
+        const avgDealInPts = extStats.平均铳点 && extStats.平均铳点 > 0 ? Math.round(extStats.平均铳点) : (mode === '3p' ? 8600 : 5800)
+
+        const result: {
+            readonly isWin: boolean
+            readonly isDealIn: boolean
+            readonly dealInScore: number
+            readonly isRiichi: boolean
+            readonly isFuro: boolean
+            readonly isDamaten: boolean
+            readonly isInitiative: boolean
+            readonly uradoraHits: number
+        }[] = []
+
+        for (let i = 0; i < total; i++) {
+            const isWin = winIndices.has(i)
+            const isDealIn = dealInIndices.has(i)
+            const isRiichi = riichiIndices.has(i)
+            const isFuro = furoIndices.has(i)
+            const isDamaten = damatenIndices.has(i)
+            const isInitiative = initiativeIndices.has(i)
+            const uradoraHits = uradoraIndices.has(i) ? 1 : 0
+            const dealInScore = isDealIn ? avgDealInPts : 0
+
+            result.push({
+                isWin,
+                isDealIn,
+                dealInScore,
+                isRiichi,
+                isFuro,
+                isDamaten,
+                isInitiative,
+                uradoraHits
+            })
+        }
+
+        return result
+    }
+
     public async syncPlayerByNickname(
         nickname: string,
         mode: GameMode = '3p',
@@ -581,6 +755,8 @@ export class AmaeKoromoService {
                 readonly riichiSticks: number
             }[] = []
 
+            const distributedMetrics = this.distributeRoundStyleMetrics(gameSpecs, extStats, mode)
+
             const roundMetricsData: {
                 readonly id: string
                 readonly roundId: string
@@ -595,6 +771,10 @@ export class AmaeKoromoService {
                 readonly luckScore: number
                 readonly skillScore: number
                 readonly isWin: boolean
+                readonly isRiichi: boolean
+                readonly isFuro: boolean
+                readonly isDamaten: boolean
+                readonly isInitiative: boolean
             }[] = []
 
             let specIdx = 0
@@ -649,8 +829,15 @@ export class AmaeKoromoService {
 
                 const matchTime = new Date(baseTimestamp - (gameSpecs.length - 1 - specIdx) * 3600000 * 2.5)
                 const playerSeat = specIdx % maxRank
-                const isDealIn = (rank === maxRank && !isBadLuck)
-                const isWin = (rank === 1 || (rank === 2 && specIdx % 2 === 0))
+                const dist = distributedMetrics[specIdx]
+                const isDealIn = dist?.isDealIn ?? (rank === maxRank && !isBadLuck)
+                const isWin = dist?.isWin ?? (rank === 1 || (rank === 2 && specIdx % 2 === 0))
+                const isRiichi = dist?.isRiichi ?? false
+                const isFuro = dist?.isFuro ?? false
+                const isDamaten = dist?.isDamaten ?? false
+                const isInitiative = dist?.isInitiative ?? false
+                const uradoraHits = dist ? dist.uradoraHits : (gameLuck >= 70 ? 1 : 0)
+                const dealInScore = dist ? dist.dealInScore : (isDealIn ? 8000 : 0)
                 const startShanten = this.calculateStartShanten(playerSeat, extStats, gameLuck, luckScore, mode, 0)
                 const roundId = `${gameId}-r0`
 
@@ -686,13 +873,17 @@ export class AmaeKoromoService {
                     startShanten,
                     startDoraCount: gameLuck >= 60 ? 2 : 1,
                     drawLuckRatio: gameLuck >= 50 ? 0.35 : 0.20,
-                    uradoraHits: gameLuck >= 70 ? 1 : 0,
-                    dealInScore: isDealIn ? 8000 : 0,
+                    uradoraHits,
+                    dealInScore,
                     tsumoLossScore: (rank === maxRank && isBadLuck) ? 6000 : 0,
                     tileEfficiency: gameSkill >= 50 ? 0.88 : 0.72,
                     luckScore: gameLuck,
                     skillScore: gameSkill,
-                    isWin
+                    isWin,
+                    isRiichi,
+                    isFuro,
+                    isDamaten,
+                    isInitiative
                 })
                 specIdx++
             }
