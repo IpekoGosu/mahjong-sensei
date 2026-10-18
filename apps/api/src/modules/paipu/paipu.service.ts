@@ -177,7 +177,25 @@ export class PaipuService {
                 ) {
                     throw new BadRequestException('패보 데이터에 필수 필드(uuid, players, rounds)가 누락되었거나 형식이 올바르지 않습니다.')
                 }
-                record = parsed
+                const rawRecord = parsed as {
+                    readonly uuid: string
+                    readonly roomType?: string
+                    readonly timestamp?: number
+                    readonly startTime?: number
+                    readonly players: MajsoulGameRecord['players']
+                    readonly rounds: MajsoulGameRecord['rounds']
+                }
+                const rawTs = rawRecord.timestamp ?? rawRecord.startTime
+                const ts = (typeof rawTs === 'number' && Number.isFinite(rawTs) && rawTs > 0)
+                    ? Math.floor(rawTs)
+                    : Date.now()
+                record = {
+                    uuid: rawRecord.uuid,
+                    roomType: rawRecord.roomType || (rawRecord.players.length === 3 ? '3인 금탁 반장전' : '4인 금탁 반장전'),
+                    timestamp: ts,
+                    players: rawRecord.players,
+                    rounds: rawRecord.rounds
+                }
             } catch (err) {
                 if (err instanceof BadRequestException) {
                     throw err
