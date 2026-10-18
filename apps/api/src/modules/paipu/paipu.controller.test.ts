@@ -289,13 +289,22 @@ test('PaipuService - generateSyntheticStartingHands generates 3P and 4P hands wi
     const hands3P = service.testGenerateSyntheticStartingHands([
         { seat: 0, startShanten: 1, startDoraCount: 0 },
         { seat: 1, startShanten: 2, startDoraCount: 1 },
-        { seat: 2, startShanten: 3, startDoraCount: 0 }
+        { seat: 2, startShanten: 3, startDoraCount: 3 }
     ], true)
 
     assert.strictEqual(hands3P.length, 3)
     assert.strictEqual(hands3P[0]?.length, 13)
     assert.strictEqual(hands3P[1]?.length, 13)
     assert.ok(hands3P[1]?.includes('0p'))
+    // 3P dora 3 uses 4z (North/Kita), never 0m or 2m-8m
+    assert.ok(hands3P[2]?.includes('4z'))
+    assert.strictEqual(hands3P[2]?.includes('0m'), false)
+    for (const hand of hands3P) {
+        assert.strictEqual(
+            hand?.some((t) => ['2m', '3m', '4m', '5m', '6m', '7m', '8m', '0m'].includes(t)),
+            false
+        )
+    }
 })
 
 test('PaipuService - getPaipuDetail throws NotFoundException when game is missing', async () => {

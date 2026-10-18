@@ -293,14 +293,20 @@ export class PaipuParser {
                 }
             }
 
-            const firstHule = huleAction.hules[0]
+            const aggregatedDeltaScores: number[] = [0, 0, 0, 0]
+            for (const h of huleAction.hules) {
+                if (h.deltaScores) {
+                    h.deltaScores.forEach((d, idx) => {
+                        aggregatedDeltaScores[idx] = (aggregatedDeltaScores[idx] ?? 0) + d
+                    })
+                }
+            }
+
             const losingSeats: SeatIndex[] = []
-            if (firstHule) {
-                for (let seat = 0; seat < 4; seat++) {
-                    const s = seat as SeatIndex
-                    if (!winnerSeats.includes(s) && (firstHule.deltaScores[s] ?? 0) < 0) {
-                        losingSeats.push(s)
-                    }
+            for (let seat = 0; seat < 4; seat++) {
+                const s = seat as SeatIndex
+                if (!winnerSeats.includes(s) && (aggregatedDeltaScores[s] ?? 0) < 0) {
+                    losingSeats.push(s)
                 }
             }
 
@@ -312,7 +318,7 @@ export class PaipuParser {
                     winnerSeats,
                     loserSeat,
                     score: totalHandScore,
-                    deltaScores: firstHule?.deltaScores,
+                    deltaScores: aggregatedDeltaScores,
                     yakuList: combinedYaku,
                     summaryKo: `${winnerNames} 론 화료 (${loserSeat + 1}번가 방총, ${totalHandScore.toLocaleString()}점)`
                 }
@@ -322,7 +328,7 @@ export class PaipuParser {
                     type: 'tsumo',
                     winnerSeats,
                     score: totalHandScore,
-                    deltaScores: firstHule?.deltaScores,
+                    deltaScores: aggregatedDeltaScores,
                     yakuList: combinedYaku,
                     summaryKo: `${winnerSeat + 1}번가 쯔모 화료 (${totalHandScore.toLocaleString()}점)`
                 }

@@ -372,11 +372,13 @@ export class PaipuService {
                         summaryKo: `${winnerSeat + 1}번가 론 화료 (${loserSeat + 1}번가 방총, ${loserMetric.dealInScore.toLocaleString()}점)`
                     }
                 } else {
+                    const calculatedTsumoScore = r.roundMetrics.reduce((sum, m) => sum + m.tsumoLossScore, 0)
+                    const finalTsumoScore = calculatedTsumoScore > 0 ? calculatedTsumoScore : 8000
                     roundResult = {
                         type: 'tsumo',
                         winnerSeats: [winnerSeat],
-                        score: 8000,
-                        summaryKo: `${winnerSeat + 1}번가 쯔모 화료 (8,000점)`
+                        score: finalTsumoScore,
+                        summaryKo: `${winnerSeat + 1}번가 쯔모 화료 (${finalTsumoScore.toLocaleString()}점)`
                     }
                 }
             } else {
@@ -419,12 +421,19 @@ export class PaipuService {
         const playerCount = is3P ? 3 : 4
         const result: (readonly string[])[] = []
 
-        const sampleTileSets: readonly (readonly string[])[] = [
+        // 3인마는 2m~8m 및 0m이 없으므로 1m, 9m, 통수, 삭수, 자패로만 구성
+        const sampleTileSets4P: readonly (readonly string[])[] = [
             ['1m', '2m', '3m', '4p', '5p', '6p', '7s', '8s', '9s', '1z', '1z', '5z', '5z'],
             ['2m', '3m', '4m', '1p', '2p', '3p', '5s', '6s', '7s', '2z', '2z', '6z', '6z'],
             ['4m', '5m', '6m', '7p', '8p', '9p', '2s', '3s', '4s', '3z', '3z', '7z', '7z'],
             ['1p', '2p', '3p', '4p', '5p', '6p', '1s', '2s', '3s', '4z', '4z', '5z', '5z']
         ]
+        const sampleTileSets3P: readonly (readonly string[])[] = [
+            ['1m', '9m', '1p', '2p', '3p', '4p', '5p', '6p', '1s', '2s', '3s', '1z', '1z'],
+            ['1m', '9m', '7p', '8p', '9p', '4s', '5s', '6s', '2z', '2z', '6z', '6z', '7z'],
+            ['1p', '2p', '3p', '4p', '5p', '6p', '7s', '8s', '9s', '3z', '3z', '5z', '5z']
+        ]
+        const sampleTileSets = is3P ? sampleTileSets3P : sampleTileSets4P
 
         for (let seat = 0; seat < playerCount; seat++) {
             const m = metrics.find((metric) => metric.seat === seat)
@@ -439,7 +448,7 @@ export class PaipuService {
                     baseHand[7] = '0s'
                 }
                 if (doraCount >= 3 && baseHand[1] !== undefined) {
-                    baseHand[1] = '0m'
+                    baseHand[1] = is3P ? '4z' : '0m'
                 }
             }
             result.push(baseHand)

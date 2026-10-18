@@ -164,8 +164,9 @@ export function PaipuRoundInspectorModal({
                 setDetail(data)
                 setLoading(false)
             })
-            .catch((err: Error) => {
-                setError(err.message || '패보 데이터를 불러오는 중 오류가 발생했습니다.')
+            .catch((err) => {
+                const message = err instanceof Error ? err.message : '패보 데이터를 불러오는 중 오류가 발생했습니다.'
+                setError(message)
                 setLoading(false)
             })
     }, [isOpen, gameId, apiUrl])
