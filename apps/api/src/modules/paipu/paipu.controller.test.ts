@@ -6,6 +6,7 @@ import { PaipuService } from './paipu.service'
 import { PrismaService } from '../../prisma/prisma.service'
 import { ImportPaipuDto, ImportPaipuPipe } from './dto/import-paipu.dto'
 import { ImportBatchPaipuDto, ImportBatchPaipuPipe } from './dto/import-batch-paipu.dto'
+import { UploadPaipuDto, UploadPaipuPipe } from './dto/upload-paipu.dto'
 
 class MockPrismaService extends PrismaService {
     public constructor() {
@@ -25,6 +26,16 @@ class MockPaipuService extends PaipuService {
         return { success: true, gameId: urlOrUuid }
     }
 
+    public override async importRawPaipu(
+        _content: string,
+        _format: 'json' | 'protobuf' | 'base64' = 'json'
+    ): Promise<{
+        readonly success: boolean
+        readonly gameId: string
+    }> {
+        return { success: true, gameId: 'uploaded-game-uuid' }
+    }
+
     public override async importBatch(inputs: readonly string[]): Promise<{
         readonly total: number
         readonly imported: number
@@ -39,6 +50,7 @@ class MockPaipuService extends PaipuService {
         }
     }
 }
+
 
 test('ImportPaipuDto - runtime validation', () => {
     /*_ GEMINI THINKING _*/
@@ -195,4 +207,43 @@ test('PaipuController - controller level validation', async () => {
     const fastPathBatchRes = await controller.importBatch(preValidatedBatchDto)
     assert.strictEqual(fastPathBatchRes.total, 1)
     assert.strictEqual(fastPathBatchRes.gameIds[0], 'batch-uuid-fast-path')
+
+    // Controller upload validation
+    await assert.rejects(
+        async () => await controller.upload({ content: '' }),
+        BadRequestException
+    )
+
+    const uploadRes = await controller.upload({ content: '{"uuid":"test"}', format: 'json' })
+    assert.strictEqual(uploadRes.success, true)
+    assert.strictEqual(uploadRes.gameId, 'uploaded-game-uuid')
 })
+
+test('UploadPaipuDto - runtime validation', () => {
+    /*_ GEMINI THINKING _*/
+    // Should reject non-object or null/undefined
+    assert.throws(() => UploadPaipuDto.validate(null), BadRequestException)
+    assert.throws(() => UploadPaipuDto.validate(undefined), BadRequestException)
+    assert.throws(() => UploadPaipuDto.validate(''), BadRequestException)
+
+    // Should reject missing content
+    assert.throws(() => UploadPaipuDto.validate({}), BadRequestException)
+    assert.throws(() => UploadPaipuDto.validate({ content: '' }), BadRequestException)
+    assert.throws(() => UploadPaipuDto.validate({ content: 123 }), BadRequestException)
+
+    // Should reject invalid format
+    assert.throws(() => UploadPaipuDto.validate({ content: 'valid', format: 'xml' }), BadRequestException)
+
+    // Valid inputs
+    const validJson = UploadPaipuDto.validate({ content: '{"uuid":"123"}', format: 'json' })
+    assert.strictEqual(validJson.format, 'json')
+    assert.strictEqual(validJson.content, '{"uuid":"123"}')
+
+    const autoBase64 = UploadPaipuDto.validate({ content: 'rawbase64string' })
+    assert.strictEqual(autoBase64.format, 'base64')
+
+    const pipe = new UploadPaipuPipe()
+    const piped = pipe.transform({ content: 'valid' })
+    assert.strictEqual(piped.content, 'valid')
+})
+

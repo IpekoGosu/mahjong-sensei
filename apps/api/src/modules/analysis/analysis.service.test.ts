@@ -1,9 +1,11 @@
 /*_ GEMINI THINKING _*/
 import test from 'node:test'
 import assert from 'node:assert'
-import { AnalysisService, ParticipantWithGameRounds } from './analysis.service'
+import { NotFoundException } from '@nestjs/common'
+import { AnalysisService, ParticipantWithGameRounds, GameWithCoachingRelations } from './analysis.service'
 import { PrismaService } from '../../prisma/prisma.service'
 import { SeatIndex, RollingWindowSize } from '@mahjong-sensei/types'
+import { SAMPLE_MAJSOUL_GAME, LiqiBinaryDecoder } from '@mahjong-sensei/mahjong-core'
 
 class MockPrismaService extends PrismaService {
     public constructor() {
@@ -13,6 +15,7 @@ class MockPrismaService extends PrismaService {
 
 class MockAnalysisService extends AnalysisService {
     public mockParticipants: readonly ParticipantWithGameRounds[] = []
+    public mockGame: GameWithCoachingRelations | null = null
 
     public constructor() {
         super(new MockPrismaService())
@@ -25,7 +28,12 @@ class MockAnalysisService extends AnalysisService {
     ): Promise<readonly ParticipantWithGameRounds[]> {
         return this.mockParticipants
     }
+
+    protected override async fetchGameForCoaching(_gameId: string): Promise<GameWithCoachingRelations | null> {
+        return this.mockGame
+    }
 }
+
 
 test('AnalysisService - Return zero defaults when no games found for account', async () => {
     const service = new MockAnalysisService()
@@ -184,3 +192,109 @@ test('AnalysisService - Zero denominator fallbacks for damaten, initiative, and 
     assert.strictEqual(stats.initiativeRate, 0)
     assert.strictEqual(stats.uradoraRate, 0)
 })
+
+test('AnalysisService - getCoachingReport throws NotFoundException when game missing', async () => {
+    const service = new MockAnalysisService()
+    service.mockGame = null
+
+    await assert.rejects(
+        async () => await service.getCoachingReport('missing-game-id'),
+        NotFoundException
+    )
+})
+
+test('AnalysisService - getCoachingReport generates synthetic coaching report for games without rawProtobuf', async () => {
+    const service = new MockAnalysisService()
+    service.mockGame = {
+        id: 'synthetic-game-1',
+        roomType: '4인 옥탁 반장전',
+        rawProtobuf: null,
+        participants: [
+            {
+                seat: 0,
+                finalScore: 12000,
+                finalRank: 4,
+                luckScore: 35.0,
+                skillScore: 42.0,
+                player: { accountId: 10001, nickname: '마작수련생' }
+            }
+        ],
+        rounds: [
+            {
+                id: 'round-1',
+                roundIndex: 0,
+                roundMetrics: [
+                    {
+                        seat: 0,
+                        startShanten: 3.0,
+                        dealInScore: 12000,
+                        tileEfficiency: 0.85,
+                        luckScore: 30,
+                        skillScore: 40,
+                        isWin: false,
+                        isRiichi: false
+                    }
+                ]
+            },
+            {
+                id: 'round-2',
+                roundIndex: 1,
+                roundMetrics: [
+                    {
+                        seat: 0,
+                        startShanten: 2.0,
+                        dealInScore: 0,
+                        tileEfficiency: 0.55,
+                        luckScore: 40,
+                        skillScore: 45,
+                        isWin: false,
+                        isRiichi: false
+                    }
+                ]
+            }
+        ]
+    }
+
+    const report = await service.getCoachingReport('synthetic-game-1', 10001)
+
+    assert.strictEqual(report.gameId, 'synthetic-game-1')
+    assert.strictEqual(report.targetSeat, 0)
+    assert.strictEqual(report.is3P, false)
+    assert.strictEqual(report.quadrant, 'SLUMP_LOSS')
+    assert.strictEqual(report.criticalMistakes.length, 2)
+    assert.strictEqual(report.criticalMistakes[0]?.mistakeCategory, 'RECKLESS_PUSH_DEAL_IN')
+    assert.strictEqual(report.criticalMistakes[1]?.mistakeCategory, 'UKEIRE_LOSS')
+    assert.ok(report.overallSummaryKo.includes('실력 점수가 난조'))
+    assert.ok(report.actionableAdviceKo.length > 0)
+})
+
+test('AnalysisService - getCoachingReport analyzes rawProtobuf game with CoachingAdvisor', async () => {
+    const service = new MockAnalysisService()
+    const decoder = new LiqiBinaryDecoder()
+    const encoded = decoder.encode(SAMPLE_MAJSOUL_GAME)
+
+    service.mockGame = {
+        id: SAMPLE_MAJSOUL_GAME.uuid,
+        roomType: SAMPLE_MAJSOUL_GAME.roomType,
+        rawProtobuf: Buffer.from(encoded),
+        participants: [
+            {
+                seat: 0,
+                finalScore: 25000,
+                finalRank: 2,
+                luckScore: 50.0,
+                skillScore: 50.0,
+                player: { accountId: 10001, nickname: '마작수련생' }
+            }
+        ],
+        rounds: []
+    }
+
+    const report = await service.getCoachingReport(SAMPLE_MAJSOUL_GAME.uuid, 10001)
+
+    assert.strictEqual(report.gameId, SAMPLE_MAJSOUL_GAME.uuid)
+    assert.strictEqual(report.targetSeat, 0)
+    assert.ok(report.overallSummaryKo.length > 0)
+    assert.ok(report.actionableAdviceKo.length > 0)
+})
+

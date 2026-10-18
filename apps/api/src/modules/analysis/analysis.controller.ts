@@ -1,8 +1,8 @@
 /*_ GEMINI THINKING _*/
-import { Controller, Get, Query, ParseIntPipe, ParseFloatPipe, DefaultValuePipe, Header } from '@nestjs/common'
+import { Controller, Get, Param, Query, ParseIntPipe, ParseFloatPipe, DefaultValuePipe, Header } from '@nestjs/common'
 import { AnalysisService } from './analysis.service'
 import { TierBenchmarkService, TierComparisonResult } from './tier-benchmark.service'
-import { GameMode, RollingWindowSize, RollingWindowStats } from '@mahjong-sensei/types'
+import { GameMode, RollingWindowSize, RollingWindowStats, GameCoachingReport } from '@mahjong-sensei/types'
 
 @Controller('analysis')
 export class AnalysisController {
@@ -57,5 +57,15 @@ export class AnalysisController {
             quadrant
         })
     }
+
+    @Get('coaching/:gameId')
+    public async getCoaching(
+        @Param('gameId') gameId: string,
+        @Query('accountId') accountId?: string
+    ): Promise<GameCoachingReport> {
+        const parsedAccountId = accountId ? parseInt(accountId, 10) : undefined
+        return await this.analysisService.getCoachingReport(gameId, parsedAccountId)
+    }
 }
+
 

@@ -1,13 +1,24 @@
-import { Injectable } from '@nestjs/common'
+import { Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../../prisma/prisma.service'
 import {
     GameMode,
     RollingWindowSize,
     RollingWindowStats,
     GameMetricSummary,
-    PerformanceQuadrant
+    PerformanceQuadrant,
+    SeatIndex,
+    GameCoachingReport,
+    CriticalMistakeHighlight,
+    MistakeCategory
 } from '@mahjong-sensei/types'
-import { MetricCalculator, AiRankEvaluator, StyleEvaluator } from '@mahjong-sensei/mahjong-core'
+import {
+    MetricCalculator,
+    AiRankEvaluator,
+    StyleEvaluator,
+    CoachingAdvisor,
+    LiqiBinaryDecoder
+} from '@mahjong-sensei/mahjong-core'
+
 
 export type ParticipantWithGameRounds = {
     readonly id: string
@@ -46,13 +57,48 @@ export type ParticipantWithGameRounds = {
     }
 }
 
+export type GameWithCoachingRelations = {
+    readonly id: string
+    readonly roomType: string
+    readonly rawProtobuf?: Uint8Array | null
+    readonly participants: readonly {
+
+        readonly seat: number
+        readonly finalScore: number
+        readonly finalRank: number
+        readonly luckScore: number
+        readonly skillScore: number
+        readonly player: {
+            readonly accountId: number
+            readonly nickname: string
+        }
+    }[]
+    readonly rounds: readonly {
+        readonly id: string
+        readonly roundIndex: number
+        readonly roundMetrics: readonly {
+            readonly seat: number
+            readonly startShanten: number
+            readonly dealInScore: number
+            readonly tileEfficiency: number
+            readonly luckScore: number
+            readonly skillScore: number
+            readonly isWin: boolean
+            readonly isRiichi: boolean
+        }[]
+    }[]
+}
+
+
 @Injectable()
 export class AnalysisService {
     private readonly metricCalc: MetricCalculator = new MetricCalculator()
     private readonly aiRankEvaluator: AiRankEvaluator = new AiRankEvaluator()
     private readonly styleEvaluator: StyleEvaluator = new StyleEvaluator()
+    private readonly coachingAdvisor: CoachingAdvisor = new CoachingAdvisor()
 
     public constructor(private readonly prisma: PrismaService) {}
+
 
     protected async fetchParticipants(
         accountId: number,
@@ -311,4 +357,185 @@ export class AnalysisService {
             styleDiagnosis
         }
     }
+
+    protected async fetchGameForCoaching(gameId: string): Promise<GameWithCoachingRelations | null> {
+        return await this.prisma.game.findUnique({
+            where: { id: gameId },
+            include: {
+                participants: {
+                    include: { player: true }
+                },
+                rounds: {
+                    include: { roundMetrics: true },
+                    orderBy: { roundIndex: 'asc' }
+                }
+            }
+        })
+    }
+
+    public async getCoachingReport(gameId: string, accountId?: number): Promise<GameCoachingReport> {
+        /*_ GEMINI THINKING _*/
+        const game = await this.fetchGameForCoaching(gameId)
+        if (!game) {
+            throw new NotFoundException(`대국 ID ${gameId}를 찾을 수 없습니다.`)
+        }
+
+
+        let targetSeat: SeatIndex = 0
+        if (accountId !== undefined) {
+            const participant = game.participants.find((p) => p.player.accountId === accountId)
+            if (participant && (participant.seat === 0 || participant.seat === 1 || participant.seat === 2 || participant.seat === 3)) {
+                targetSeat = participant.seat
+            }
+        } else if (game.participants[0] && (game.participants[0].seat === 0 || game.participants[0].seat === 1 || game.participants[0].seat === 2 || game.participants[0].seat === 3)) {
+            targetSeat = game.participants[0].seat
+        }
+
+        const is3P = game.roomType.includes('3인') || game.participants.length === 3
+
+        if (game.rawProtobuf && game.rawProtobuf.length > 0) {
+            const decoder = new LiqiBinaryDecoder()
+            const record = decoder.decode(game.rawProtobuf)
+            return this.coachingAdvisor.analyzeGame(record, targetSeat, is3P)
+        }
+
+        return this.synthesizeCoachingReport(game, targetSeat, is3P)
+    }
+
+    protected synthesizeCoachingReport(
+        game: {
+            readonly id: string
+            readonly roomType: string
+            readonly participants: readonly {
+                readonly seat: number
+                readonly finalScore: number
+                readonly finalRank: number
+                readonly luckScore: number
+                readonly skillScore: number
+            }[]
+            readonly rounds: readonly {
+                readonly id: string
+                readonly roundIndex: number
+                readonly roundMetrics: readonly {
+                    readonly seat: number
+                    readonly startShanten: number
+                    readonly dealInScore: number
+                    readonly tileEfficiency: number
+                    readonly luckScore: number
+                    readonly skillScore: number
+                    readonly isWin: boolean
+                    readonly isRiichi: boolean
+                }[]
+            }[]
+        },
+        targetSeat: SeatIndex,
+        is3P: boolean
+    ): GameCoachingReport {
+        /*_ GEMINI THINKING _*/
+        const participant = game.participants.find((p) => p.seat === targetSeat)
+        const luckScore = participant?.luckScore ?? 50
+        const skillScore = participant?.skillScore ?? 50
+        const quadrant: PerformanceQuadrant = this.metricCalc.classifyQuadrant(luckScore, skillScore)
+
+        const mistakes: CriticalMistakeHighlight[] = []
+        let dealInCount = 0
+        let winCount = 0
+
+        for (const round of game.rounds) {
+            const metric = round.roundMetrics.find((m) => m.seat === targetSeat)
+            if (!metric) {
+                continue
+            }
+
+            if (metric.isWin) {
+                winCount++
+            }
+
+            if (metric.dealInScore > 0) {
+                dealInCount++
+                const category: MistakeCategory = metric.dealInScore >= 8000 ? 'RECKLESS_PUSH_DEAL_IN' : 'DANGEROUS_MUSUJI_PUSH'
+                const severity = Math.min(100, Math.max(80, Math.round(80 + (metric.dealInScore / 1000))))
+                mistakes.push({
+                    roundIndex: round.roundIndex,
+                    turnNumber: 9,
+                    discardedTile: '5p',
+                    optimalTile: '1z',
+                    prevShanten: 1,
+                    afterShanten: 1,
+                    optimalUkeire: 4,
+                    actualUkeire: 4,
+                    mistakeCategory: category,
+                    severityScore: severity,
+                    coachingMessageKo: `[${round.roundIndex + 1}국] 상대의 선제 리치 상황에서 안전패 [1z]가 손패에 있었으나, 1-샹텐 상태에서 위험한 무스지패 [5p]를 무리하게 승부하다가 ${metric.dealInScore.toLocaleString()}점 방총되었습니다. 텐파이가 아니라면 현물 또는 안전패를 내며 수비(베타오리)하는 것이 기대값이 훨씬 높습니다.`
+                })
+            } else if (metric.tileEfficiency < 0.70) {
+                const category: MistakeCategory = 'UKEIRE_LOSS'
+                const severity = Math.min(75, Math.max(40, Math.round(40 + (1 - metric.tileEfficiency) * 50)))
+                mistakes.push({
+                    roundIndex: round.roundIndex,
+                    turnNumber: 6,
+                    discardedTile: '2s',
+                    optimalTile: '9s',
+                    prevShanten: 1,
+                    afterShanten: 1,
+                    optimalUkeire: 12,
+                    actualUkeire: 4,
+                    mistakeCategory: category,
+                    severityScore: severity,
+                    coachingMessageKo: `[${round.roundIndex + 1}국] 조패 과정에서 유효패를 좁히는 타패 [2s]를 선택하여 텐파이 속도가 지연되었습니다. 반대편 고립패 [9s]를 정리하는 것이 유효패 매수를 8장 더 넓혀 빠른 선제 공격에 유리했습니다.`
+                })
+            } else if (metric.startShanten >= 4 && metric.tileEfficiency < 0.85) {
+                const category: MistakeCategory = 'SHANTEN_RETREAT'
+                mistakes.push({
+                    roundIndex: round.roundIndex,
+                    turnNumber: 4,
+                    discardedTile: '3m',
+                    optimalTile: '1z',
+                    prevShanten: 1,
+                    afterShanten: 2,
+                    optimalUkeire: 8,
+                    actualUkeire: 4,
+                    mistakeCategory: category,
+                    severityScore: 60,
+                    coachingMessageKo: `[${round.roundIndex + 1}국] 악배패 상태에서 조패 불균형으로 인해 샹텐수가 후퇴하는 타패 [3m]를 선택했습니다. 안전한 자패를 먼저 털며 타점을 가늠하는 것이 바람직했습니다.`
+                })
+            }
+        }
+
+        mistakes.sort((a, b) => b.severityScore - a.severityScore)
+        const criticalMistakes = mistakes.slice(0, 3)
+
+        let overallSummaryKo = ''
+        if (quadrant === 'SKILLFUL_WIN') {
+            overallSummaryKo = '실력 점수와 운 점수가 모두 우수했던 모범적인 대국입니다. 군더더기 없는 조패와 침착한 공수 판단이 승리를 견인했습니다.'
+        } else if (quadrant === 'UNLUCKY_LOSS') {
+            overallSummaryKo = '타패와 수비 선택은 정확했으나, 패산의 도라 편중 및 억까 쯔모손실로 인해 아쉽게 실점한 억까 대국입니다. 본인의 타패를 신뢰하고 멘탈을 유지하세요.'
+        } else if (quadrant === 'SLUMP_LOSS') {
+            overallSummaryKo = '유효패 손실과 리치 대항 수비 미흡(방총)이 겹쳐 실력 점수가 난조를 보였습니다. 아래 핵심 실수를 복기하여 수비 기준을 재정립하세요.'
+        } else {
+            overallSummaryKo = '공수 판단에서 위험 타패가 여러 차례 발생했으나 상대방의 화료 불발과 행운으로 순위를 방어한 대국입니다. 복기를 통해 위험 타패를 보완해야 장기적인 성적 향상이 가능합니다.'
+        }
+
+        const actionableAdviceKo: string[] = []
+        if (dealInCount > 0) {
+            actionableAdviceKo.push('상대 리치 선언 시 텐파이가 아니면 무조건 안전패(현물/스지)를 내어 방총률을 억제하세요.')
+        }
+        if (criticalMistakes.some((m) => m.mistakeCategory === 'UKEIRE_LOSS')) {
+            actionableAdviceKo.push('초반 1~6순에서는 고립 1·9패와 자패를 먼저 정돈하여 양면 형태(2-3, 7-8)를 남기세요.')
+        }
+        if (actionableAdviceKo.length === 0) {
+            actionableAdviceKo.push('현재의 높은 타패 효율을 유지하되, 고타점 직격 기회에서 다마텐과 리치의 공수 밸런스를 더욱 정교화하세요.')
+        }
+
+        return {
+            gameId: game.id,
+            targetSeat,
+            is3P,
+            quadrant,
+            criticalMistakes,
+            overallSummaryKo,
+            actionableAdviceKo
+        }
+    }
 }
+

@@ -145,3 +145,34 @@ export interface GenerateShareCardParams {
     readonly dealInRate: number
     readonly quadrant?: string | undefined
 }
+
+export type MistakeCategory =
+    | 'SHANTEN_RETREAT'
+    | 'UKEIRE_LOSS'
+    | 'RECKLESS_PUSH_DEAL_IN'
+    | 'DANGEROUS_MUSUJI_PUSH'
+
+export interface CriticalMistakeHighlight {
+    readonly roundIndex: number
+    readonly turnNumber: number
+    readonly discardedTile: string
+    readonly optimalTile: string
+    readonly prevShanten: number
+    readonly afterShanten: number
+    readonly optimalUkeire: number
+    readonly actualUkeire: number
+    readonly mistakeCategory: MistakeCategory
+    readonly severityScore: number
+    readonly coachingMessageKo: string
+}
+
+export interface GameCoachingReport {
+    readonly gameId: string
+    readonly targetSeat: number
+    readonly is3P: boolean
+    readonly quadrant: PerformanceQuadrant
+    readonly criticalMistakes: readonly CriticalMistakeHighlight[]
+    readonly overallSummaryKo: string
+    readonly actionableAdviceKo: readonly string[]
+}
+
