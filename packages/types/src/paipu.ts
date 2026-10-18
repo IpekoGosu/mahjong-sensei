@@ -33,20 +33,41 @@ export interface PaipuAction {
     readonly isRiichi?: boolean
 }
 
+export interface PaipuRoundResult {
+    readonly type: 'ron' | 'tsumo' | 'ryukyoku'
+    readonly winnerSeats?: readonly SeatIndex[] | undefined
+    readonly loserSeat?: SeatIndex | undefined
+    readonly score?: number | undefined
+    readonly deltaScores?: readonly number[] | undefined
+    readonly yakuList?: readonly string[] | undefined
+    readonly summaryKo: string
+}
+
+export interface PaipuRoundMetricSummary {
+    readonly seat: SeatIndex
+    readonly startingShanten: number
+    readonly startingDoraCount: number
+    readonly luckScore: number
+    readonly skillScore: number
+    readonly tileEfficiency: number
+    readonly dealInScore: number
+    readonly isWin?: boolean | undefined
+    readonly isRiichi?: boolean | undefined
+    readonly isFuro?: boolean | undefined
+    readonly isDamaten?: boolean | undefined
+}
+
 export interface PaipuRound {
     readonly roundIndex: number
     readonly roundName: string
     readonly honba: number
     readonly riichiSticks: number
-    readonly initialScores: readonly [number, number, number, number]
+    readonly initialScores: readonly [number, number, number, number] | readonly number[]
     readonly doraIndicators: readonly string[]
-    readonly startingHands: readonly [
-        readonly string[],
-        readonly string[],
-        readonly string[],
-        readonly string[]
-    ]
+    readonly startingHands: readonly (readonly string[])[]
     readonly actions: readonly PaipuAction[]
+    readonly result?: PaipuRoundResult | undefined
+    readonly roundMetrics?: readonly PaipuRoundMetricSummary[] | undefined
 }
 
 export interface PaipuDetail {

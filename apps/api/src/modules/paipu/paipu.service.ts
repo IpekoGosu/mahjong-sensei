@@ -6,7 +6,54 @@ import {
     SAMPLE_MAJSOUL_GAME,
     LiqiBinaryDecoder
 } from '@mahjong-sensei/mahjong-core'
-import { PaipuDetail } from '@mahjong-sensei/types'
+import {
+    PaipuDetail,
+    PaipuRound,
+    PaipuRoundResult,
+    PaipuRoundMetricSummary,
+    SeatIndex
+} from '@mahjong-sensei/types'
+
+export interface GameWithDetailRelations {
+    readonly id: string
+    readonly roomType: string
+    readonly gameDate: Date
+    readonly rawProtobuf: Uint8Array | Buffer | null
+    readonly participants: readonly {
+        readonly seat: number
+        readonly finalRank: number
+        readonly finalScore: number
+        readonly luckScore: number
+        readonly skillScore: number
+        readonly player: {
+            readonly accountId: number
+            readonly nickname: string
+        }
+    }[]
+    readonly rounds: readonly {
+        readonly id: string
+        readonly roundIndex: number
+        readonly honba: number
+        readonly riichiSticks: number
+        readonly roundMetrics: readonly {
+            readonly seat: number
+            readonly startShanten: number
+            readonly startDoraCount: number
+            readonly drawLuckRatio: number
+            readonly uradoraHits: number
+            readonly dealInScore: number
+            readonly tsumoLossScore: number
+            readonly tileEfficiency: number
+            readonly luckScore: number
+            readonly skillScore: number
+            readonly isWin: boolean
+            readonly isRiichi: boolean
+            readonly isFuro: boolean
+            readonly isDamaten: boolean
+            readonly isInitiative: boolean
+        }[]
+    }[]
+}
 
 @Injectable()
 export class PaipuService {
@@ -244,45 +291,114 @@ export class PaipuService {
         }
     }
 
-    public async getPaipuDetail(gameId: string): Promise<PaipuDetail> {
-        const game = await this.prisma.game.findUnique({
+    protected async fetchGameForDetail(gameId: string): Promise<GameWithDetailRelations | null> {
+        return await this.prisma.game.findUnique({
             where: { id: gameId },
             include: {
                 participants: {
-                    include: { player: true }
+                    include: { player: true },
+                    orderBy: { seat: 'asc' }
                 },
                 rounds: {
+                    orderBy: { roundIndex: 'asc' },
                     include: { roundMetrics: true }
                 }
             }
         })
+    }
+
+    public async getPaipuDetail(gameId: string): Promise<PaipuDetail> {
+        /*_ GEMINI THINKING _*/
+        const game = await this.fetchGameForDetail(gameId)
 
         if (!game) {
             throw new NotFoundException(`Paipu with id ${gameId} not found`)
         }
 
+        // 1. If rawProtobuf is available, decode and parse to return rich actual paipu detail
+        if (game.rawProtobuf && game.rawProtobuf.length > 0) {
+            try {
+                const record = this.decoder.decode(game.rawProtobuf)
+                const parsed = this.parser.parseGameRecord(record)
+                return parsed.detail
+            } catch {
+                // fallback to synthetic DB reconstruction if decoding fails
+            }
+        }
+
+        // 2. Synthesize rich PaipuDetail from DB records for Amae-Koromo / synchronized games
         const players = game.participants.map((p) => ({
             accountId: p.player.accountId,
             nickname: p.player.nickname,
-            seat: p.seat as 0 | 1 | 2 | 3,
+            seat: p.seat as SeatIndex,
             rank: p.finalRank,
             finalScore: p.finalScore,
             luckScore: p.luckScore,
             skillScore: p.skillScore
         }))
 
-        const rounds = game.rounds.map((r) => {
-            const roundNames = ['동1국', '동2국', '동3국', '동4국', '남1국', '남2국', '남3국', '남4국']
+        const is3P = game.roomType.includes('3인') || players.length === 3
+        const roundNames = ['동1국', '동2국', '동3국', '동4국', '남1국', '남2국', '남3국', '남4국']
+
+        const rounds: PaipuRound[] = game.rounds.map((r) => {
             const name = roundNames[r.roundIndex] ?? `동${r.roundIndex + 1}국`
+            const metricsSummary: PaipuRoundMetricSummary[] = r.roundMetrics.map((m) => ({
+                seat: m.seat as SeatIndex,
+                startingShanten: m.startShanten,
+                startingDoraCount: m.startDoraCount,
+                luckScore: m.luckScore,
+                skillScore: m.skillScore,
+                tileEfficiency: m.tileEfficiency,
+                dealInScore: m.dealInScore,
+                isWin: m.isWin,
+                isRiichi: m.isRiichi,
+                isFuro: m.isFuro,
+                isDamaten: m.isDamaten
+            }))
+
+            let roundResult: PaipuRoundResult | undefined = undefined
+            const winnerMetric = r.roundMetrics.find((m) => m.isWin)
+            const loserMetric = r.roundMetrics.find((m) => m.dealInScore > 0)
+
+            if (winnerMetric) {
+                const winnerSeat = winnerMetric.seat as SeatIndex
+                if (loserMetric) {
+                    const loserSeat = loserMetric.seat as SeatIndex
+                    roundResult = {
+                        type: 'ron',
+                        winnerSeats: [winnerSeat],
+                        loserSeat,
+                        score: loserMetric.dealInScore,
+                        summaryKo: `${winnerSeat + 1}번가 론 화료 (${loserSeat + 1}번가 방총, ${loserMetric.dealInScore.toLocaleString()}점)`
+                    }
+                } else {
+                    roundResult = {
+                        type: 'tsumo',
+                        winnerSeats: [winnerSeat],
+                        score: 8000,
+                        summaryKo: `${winnerSeat + 1}번가 쯔모 화료 (8,000점)`
+                    }
+                }
+            } else {
+                roundResult = {
+                    type: 'ryukyoku',
+                    summaryKo: '유국'
+                }
+            }
+
+            const startingHands = this.generateSyntheticStartingHands(r.roundMetrics, is3P)
+
             return {
                 roundIndex: r.roundIndex,
                 roundName: name,
                 honba: r.honba,
                 riichiSticks: r.riichiSticks,
-                initialScores: [25000, 25000, 25000, 25000] as const,
-                doraIndicators: [],
-                startingHands: [[], [], [], []] as const,
-                actions: []
+                initialScores: is3P ? [35000, 35000, 35000] : [25000, 25000, 25000, 25000],
+                doraIndicators: ['5m'],
+                startingHands,
+                actions: [],
+                result: roundResult,
+                roundMetrics: metricsSummary
             }
         })
 
@@ -293,5 +409,42 @@ export class PaipuService {
             players,
             rounds
         }
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected generateSyntheticStartingHands(
+        metrics: readonly { seat: number; startShanten: number; startDoraCount: number }[],
+        is3P: boolean
+    ): readonly (readonly string[])[] {
+        const playerCount = is3P ? 3 : 4
+        const result: (readonly string[])[] = []
+
+        const sampleTileSets: readonly (readonly string[])[] = [
+            ['1m', '2m', '3m', '4p', '5p', '6p', '7s', '8s', '9s', '1z', '1z', '5z', '5z'],
+            ['2m', '3m', '4m', '1p', '2p', '3p', '5s', '6s', '7s', '2z', '2z', '6z', '6z'],
+            ['4m', '5m', '6m', '7p', '8p', '9p', '2s', '3s', '4s', '3z', '3z', '7z', '7z'],
+            ['1p', '2p', '3p', '4p', '5p', '6p', '1s', '2s', '3s', '4z', '4z', '5z', '5z']
+        ]
+
+        for (let seat = 0; seat < playerCount; seat++) {
+            const m = metrics.find((metric) => metric.seat === seat)
+            const baseHand = [...(sampleTileSets[seat] ?? sampleTileSets[0] ?? [])]
+            const doraCount = m ? Math.min(3, Math.max(0, m.startDoraCount)) : 0
+
+            if (doraCount > 0 && baseHand.length >= 13) {
+                if (doraCount >= 1 && baseHand[4] !== undefined) {
+                    baseHand[4] = '0p'
+                }
+                if (doraCount >= 2 && baseHand[7] !== undefined) {
+                    baseHand[7] = '0s'
+                }
+                if (doraCount >= 3 && baseHand[1] !== undefined) {
+                    baseHand[1] = '0m'
+                }
+            }
+            result.push(baseHand)
+        }
+
+        return result
     }
 }

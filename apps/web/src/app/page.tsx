@@ -26,9 +26,11 @@ import {
     Upload,
     X,
     Check,
-    AlertCircle
+    AlertCircle,
+    Eye
 } from 'lucide-react'
 import { TierBenchmarkShareCard } from '../components/TierBenchmarkShareCard'
+import { PaipuRoundInspectorModal } from '../components/PaipuRoundInspectorModal'
 
 import {
     LineChart,
@@ -63,6 +65,7 @@ export default function DashboardPage(): React.ReactElement {
     const [coachingError, setCoachingError] = useState<string | null>(null)
     const [importTab, setImportTab] = useState<'batch' | 'file'>('batch')
     const [selectedFile, setSelectedFile] = useState<File | null>(null)
+    const [selectedInspectorGameId, setSelectedInspectorGameId] = useState<string | null>(null)
     const [, startTransition] = useTransition()
 
 
@@ -848,13 +851,22 @@ export default function DashboardPage(): React.ReactElement {
                                         <span className="text-slate-500 text-xs block">화료/방총</span>
                                         <span className="font-semibold text-slate-300">{game.winCount} / {game.dealInCount}</span>
                                     </div>
-                                    <button
-                                        onClick={() => handleOpenCoaching(game.gameId)}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap"
-                                    >
-                                        <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                                        AI 코칭
-                                    </button>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={() => setSelectedInspectorGameId(game.gameId)}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap"
+                                        >
+                                            <Eye className="w-3.5 h-3.5 text-cyan-400" />
+                                            국별 상세
+                                        </button>
+                                        <button
+                                            onClick={() => handleOpenCoaching(game.gameId)}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap"
+                                        >
+                                            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                                            AI 코칭
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         ))
@@ -1150,6 +1162,16 @@ export default function DashboardPage(): React.ReactElement {
                         />
                     </div>
                 </div>
+            )}
+
+            {/* Paipu Round Inspector Modal */}
+            {selectedInspectorGameId && (
+                <PaipuRoundInspectorModal
+                    gameId={selectedInspectorGameId}
+                    isOpen={Boolean(selectedInspectorGameId)}
+                    onClose={() => setSelectedInspectorGameId(null)}
+                    apiUrl={apiUrl}
+                />
             )}
         </main>
     )

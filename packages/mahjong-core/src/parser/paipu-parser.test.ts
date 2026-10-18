@@ -39,5 +39,31 @@ test('PaipuParser - Parse sample game and compute round metrics', () => {
     assert.strictEqual(round1Seat1.isInitiative, true)
     assert.strictEqual(round1Seat1.isWin, false)
     assert.strictEqual(round1Seat1.isDamaten, false)
+
+    // Check round 0 result & metrics
+    const round0 = result.detail.rounds[0]
+    assert.ok(round0 !== undefined)
+    assert.strictEqual(round0.roundName, '동1국')
+    assert.deepStrictEqual(round0.doraIndicators, ['5m'])
+    assert.ok(round0.result !== undefined)
+    assert.strictEqual(round0.result.type, 'tsumo')
+    assert.deepStrictEqual(round0.result.winnerSeats, [0])
+    assert.strictEqual(round0.result.score, 12000)
+    assert.ok(round0.result.summaryKo.includes('쯔모 화료'))
+    assert.ok(round0.roundMetrics !== undefined)
+    assert.strictEqual(round0.roundMetrics.length, 4)
+    assert.strictEqual(round0.roundMetrics[0]?.startingShanten, 0)
+    assert.strictEqual(round0.roundMetrics[0]?.isWin, true)
+
+    // Check round 1 result & metrics
+    const round1 = result.detail.rounds[1]
+    assert.ok(round1 !== undefined)
+    assert.strictEqual(round1.roundName, '동2국')
+    assert.ok(round1.result !== undefined)
+    assert.strictEqual(round1.result.type, 'ryukyoku')
+    assert.ok(round1.result.summaryKo.includes('유국'))
+    assert.ok(round1.roundMetrics !== undefined)
+    assert.strictEqual(round1.roundMetrics.length, 4)
+    assert.strictEqual(round1.roundMetrics[1]?.isRiichi, true)
 })
 

@@ -1,12 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert'
-import { BadRequestException } from '@nestjs/common'
+import { BadRequestException, NotFoundException } from '@nestjs/common'
 import { PaipuController } from './paipu.controller'
-import { PaipuService } from './paipu.service'
+import { PaipuService, GameWithDetailRelations } from './paipu.service'
 import { PrismaService } from '../../prisma/prisma.service'
 import { ImportPaipuDto, ImportPaipuPipe } from './dto/import-paipu.dto'
 import { ImportBatchPaipuDto, ImportBatchPaipuPipe } from './dto/import-batch-paipu.dto'
 import { UploadPaipuDto, UploadPaipuPipe } from './dto/upload-paipu.dto'
+import { SAMPLE_MAJSOUL_GAME, LiqiBinaryDecoder } from '@mahjong-sensei/mahjong-core'
 
 class MockPrismaService extends PrismaService {
     public constructor() {
@@ -15,8 +16,21 @@ class MockPrismaService extends PrismaService {
 }
 
 class MockPaipuService extends PaipuService {
+    public mockGame: GameWithDetailRelations | null = null
+
     public constructor() {
         super(new MockPrismaService())
+    }
+
+    protected override async fetchGameForDetail(_gameId: string): Promise<GameWithDetailRelations | null> {
+        return this.mockGame
+    }
+
+    public testGenerateSyntheticStartingHands(
+        metrics: readonly { seat: number; startShanten: number; startDoraCount: number }[],
+        is3P: boolean
+    ): readonly (readonly string[])[] {
+        return this.generateSyntheticStartingHands(metrics, is3P)
     }
 
     public override async importPaipu(urlOrUuid: string): Promise<{
@@ -247,5 +261,208 @@ test('UploadPaipuDto - runtime validation', () => {
     const pipe = new UploadPaipuPipe()
     const piped = pipe.transform({ content: 'valid' })
     assert.strictEqual(piped.content, 'valid')
+})
+
+test('PaipuService - generateSyntheticStartingHands generates 3P and 4P hands with dora replacements', () => {
+    /*_ GEMINI THINKING _*/
+    const service = new MockPaipuService()
+
+    // 4P mode
+    const hands4P = service.testGenerateSyntheticStartingHands([
+        { seat: 0, startShanten: 1, startDoraCount: 1 },
+        { seat: 1, startShanten: 2, startDoraCount: 2 },
+        { seat: 2, startShanten: 3, startDoraCount: 3 },
+        { seat: 3, startShanten: 2, startDoraCount: 0 }
+    ], false)
+
+    assert.strictEqual(hands4P.length, 4)
+    assert.strictEqual(hands4P[0]?.length, 13)
+    assert.ok(hands4P[0]?.includes('0p'))
+    assert.ok(hands4P[1]?.includes('0p'))
+    assert.ok(hands4P[1]?.includes('0s'))
+    assert.ok(hands4P[2]?.includes('0p'))
+    assert.ok(hands4P[2]?.includes('0s'))
+    assert.ok(hands4P[2]?.includes('0m'))
+    assert.strictEqual(hands4P[3]?.includes('0p'), false)
+
+    // 3P mode
+    const hands3P = service.testGenerateSyntheticStartingHands([
+        { seat: 0, startShanten: 1, startDoraCount: 0 },
+        { seat: 1, startShanten: 2, startDoraCount: 1 },
+        { seat: 2, startShanten: 3, startDoraCount: 0 }
+    ], true)
+
+    assert.strictEqual(hands3P.length, 3)
+    assert.strictEqual(hands3P[0]?.length, 13)
+    assert.strictEqual(hands3P[1]?.length, 13)
+    assert.ok(hands3P[1]?.includes('0p'))
+})
+
+test('PaipuService - getPaipuDetail throws NotFoundException when game is missing', async () => {
+    /*_ GEMINI THINKING _*/
+    const service = new MockPaipuService()
+    service.mockGame = null
+
+    await assert.rejects(
+        async () => await service.getPaipuDetail('non-existent-game'),
+        NotFoundException
+    )
+})
+
+test('PaipuService - getPaipuDetail decodes rawProtobuf when present and populates rounds, doraIndicators, and results', async () => {
+    /*_ GEMINI THINKING _*/
+    const service = new MockPaipuService()
+    const decoder = new LiqiBinaryDecoder()
+    const encodedProto = decoder.encode(SAMPLE_MAJSOUL_GAME)
+
+    service.mockGame = {
+        id: SAMPLE_MAJSOUL_GAME.uuid,
+        roomType: SAMPLE_MAJSOUL_GAME.roomType,
+        gameDate: new Date(SAMPLE_MAJSOUL_GAME.timestamp),
+        rawProtobuf: Buffer.from(encodedProto),
+        participants: [],
+        rounds: []
+    }
+
+    const detail = await service.getPaipuDetail(SAMPLE_MAJSOUL_GAME.uuid)
+    assert.strictEqual(detail.id, SAMPLE_MAJSOUL_GAME.uuid)
+    assert.strictEqual(detail.rounds.length, 2)
+
+    // Round 0 (tsumo win)
+    const round0 = detail.rounds[0]
+    assert.ok(round0 !== undefined)
+    assert.strictEqual(round0.roundName, '동1국')
+    assert.deepStrictEqual(round0.doraIndicators, ['5m'])
+    assert.ok(round0.result !== undefined)
+    assert.strictEqual(round0.result.type, 'tsumo')
+    assert.strictEqual(round0.result.score, 12000)
+    assert.ok(round0.roundMetrics !== undefined)
+    assert.strictEqual(round0.roundMetrics.length, 4)
+
+    // Round 1 (ryukyoku)
+    const round1 = detail.rounds[1]
+    assert.ok(round1 !== undefined)
+    assert.strictEqual(round1.roundName, '동2국')
+    assert.ok(round1.result !== undefined)
+    assert.strictEqual(round1.result.type, 'ryukyoku')
+})
+
+test('PaipuService - getPaipuDetail generates synthetic round detail with result and metrics when rawProtobuf is null', async () => {
+    /*_ GEMINI THINKING _*/
+    const service = new MockPaipuService()
+
+    service.mockGame = {
+        id: 'amae-sync-3p-10001-1',
+        roomType: '3인 금탁 남풍전',
+        gameDate: new Date(),
+        rawProtobuf: null,
+        participants: [
+            {
+                seat: 0,
+                finalRank: 1,
+                finalScore: 48000,
+                luckScore: 75.0,
+                skillScore: 68.0,
+                player: { accountId: 10001, nickname: 'SenseiPlayer' }
+            },
+            {
+                seat: 1,
+                finalRank: 2,
+                finalScore: 32000,
+                luckScore: 50.0,
+                skillScore: 55.0,
+                player: { accountId: 10002, nickname: 'RivalPlayer' }
+            },
+            {
+                seat: 2,
+                finalRank: 3,
+                finalScore: 10000,
+                luckScore: 32.0,
+                skillScore: 48.0,
+                player: { accountId: 10003, nickname: 'ThirdPlayer' }
+            }
+        ],
+        rounds: [
+            {
+                id: 'round-1',
+                roundIndex: 0,
+                honba: 0,
+                riichiSticks: 0,
+                roundMetrics: [
+                    {
+                        seat: 0,
+                        startShanten: 1,
+                        startDoraCount: 2,
+                        drawLuckRatio: 0.35,
+                        uradoraHits: 1,
+                        dealInScore: 0,
+                        tsumoLossScore: 0,
+                        tileEfficiency: 0.88,
+                        luckScore: 75.0,
+                        skillScore: 68.0,
+                        isWin: true,
+                        isRiichi: true,
+                        isFuro: false,
+                        isDamaten: false,
+                        isInitiative: true
+                    },
+                    {
+                        seat: 1,
+                        startShanten: 2,
+                        startDoraCount: 1,
+                        drawLuckRatio: 0.25,
+                        uradoraHits: 0,
+                        dealInScore: 8000,
+                        tsumoLossScore: 0,
+                        tileEfficiency: 0.75,
+                        luckScore: 50.0,
+                        skillScore: 55.0,
+                        isWin: false,
+                        isRiichi: false,
+                        isFuro: false,
+                        isDamaten: false,
+                        isInitiative: false
+                    },
+                    {
+                        seat: 2,
+                        startShanten: 3,
+                        startDoraCount: 0,
+                        drawLuckRatio: 0.15,
+                        uradoraHits: 0,
+                        dealInScore: 0,
+                        tsumoLossScore: 0,
+                        tileEfficiency: 0.65,
+                        luckScore: 32.0,
+                        skillScore: 48.0,
+                        isWin: false,
+                        isRiichi: false,
+                        isFuro: false,
+                        isDamaten: false,
+                        isInitiative: false
+                    }
+                ]
+            }
+        ]
+    }
+
+    const detail = await service.getPaipuDetail('amae-sync-3p-10001-1')
+    assert.strictEqual(detail.id, 'amae-sync-3p-10001-1')
+    assert.strictEqual(detail.players.length, 3)
+    assert.strictEqual(detail.rounds.length, 1)
+
+    const round0 = detail.rounds[0]
+    assert.ok(round0 !== undefined)
+    assert.strictEqual(round0.roundName, '동1국')
+    assert.strictEqual(round0.startingHands.length, 3)
+    assert.strictEqual(round0.startingHands[0]?.length, 13)
+    assert.ok(round0.result !== undefined)
+    assert.strictEqual(round0.result.type, 'ron')
+    assert.deepStrictEqual(round0.result.winnerSeats, [0])
+    assert.strictEqual(round0.result.loserSeat, 1)
+    assert.strictEqual(round0.result.score, 8000)
+    assert.ok(round0.result.summaryKo.includes('1번가 론 화료'))
+    assert.ok(round0.roundMetrics !== undefined)
+    assert.strictEqual(round0.roundMetrics.length, 3)
+    assert.strictEqual(round0.roundMetrics[0]?.startingShanten, 1)
 })
 
