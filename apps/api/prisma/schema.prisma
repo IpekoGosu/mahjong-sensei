@@ -29,6 +29,8 @@ model Game {
     participants GameParticipant[]
     rounds       Round[]
 
+    @@index([gameDate])
+    @@index([roomType, gameDate])
     @@map("games")
 }
 
@@ -61,6 +63,7 @@ model Round {
 
     game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
 
+    @@index([gameId])
     @@map("rounds")
 }
 
@@ -85,5 +88,6 @@ model RoundMetric {
 
     round Round @relation(fields: [roundId], references: [id], onDelete: Cascade)
 
+    @@unique([roundId, seat])
     @@map("round_metrics")
 }
