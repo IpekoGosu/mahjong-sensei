@@ -67,7 +67,12 @@ export default function DashboardPage(): React.ReactElement {
     const [importTab, setImportTab] = useState<'batch' | 'file'>('batch')
     const [selectedFile, setSelectedFile] = useState<File | null>(null)
     const [selectedInspectorGameId, setSelectedInspectorGameId] = useState<string | null>(null)
+    const [isMounted, setIsMounted] = useState<boolean>(false)
     const [, startTransition] = useTransition()
+
+    useEffect(() => {
+        setIsMounted(true)
+    }, [])
 
 
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
@@ -684,28 +689,34 @@ export default function DashboardPage(): React.ReactElement {
                         <TrendingUp className="w-5 h-5 text-amber-500" />
                         판별 운(Luck) vs 순위(Rank) 추세 ({gameMode === '3p' ? '3인' : '4인'})
                     </h2>
-                    <div className="h-64 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={chartData}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                                <XAxis dataKey="gameIndex" stroke="#64748b" label={{ value: '대국 순번', position: 'insideBottom', offset: -5 }} />
-                                <YAxis yAxisId="left" domain={[0, 100]} stroke="#a855f7" label={{ value: '운 점수', angle: -90, position: 'insideLeft' }} />
-                                <YAxis yAxisId="right" domain={gameMode === '3p' ? [1, 3] : [1, 4]} reversed stroke="#f59e0b" orientation="right" label={{ value: '순위', angle: 90, position: 'insideRight' }} />
-                                <Tooltip
-                                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
-                                    labelFormatter={(label) => {
-                                        const idx = Number(label) - 1
-                                        const targetGame = currentStats.games[currentStats.games.length - 1 - idx]
-                                        if (targetGame && targetGame.timestamp) {
-                                            return `${label}번째 대국 (${formatTimestamp(targetGame.timestamp)})`
-                                        }
-                                        return `${label}번째 대국`
-                                    }}
-                                />
-                                <Line yAxisId="left" type="monotone" dataKey="luck" stroke="#a855f7" strokeWidth={2} name="운 점수" />
-                                <Line yAxisId="right" type="monotone" dataKey="rank" stroke="#f59e0b" strokeWidth={2} name="순위" />
-                            </LineChart>
-                        </ResponsiveContainer>
+                    <div className="h-64 w-full min-h-[280px]">
+                        {isMounted ? (
+                            <ResponsiveContainer width="100%" height="100%" minHeight={280}>
+                                <LineChart data={chartData}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                                    <XAxis dataKey="gameIndex" stroke="#64748b" label={{ value: '대국 순번', position: 'insideBottom', offset: -5 }} />
+                                    <YAxis yAxisId="left" domain={[0, 100]} stroke="#a855f7" label={{ value: '운 점수', angle: -90, position: 'insideLeft' }} />
+                                    <YAxis yAxisId="right" domain={gameMode === '3p' ? [1, 3] : [1, 4]} reversed stroke="#f59e0b" orientation="right" label={{ value: '순위', angle: 90, position: 'insideRight' }} />
+                                    <Tooltip
+                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
+                                        labelFormatter={(label) => {
+                                            const idx = Number(label) - 1
+                                            const targetGame = currentStats.games[currentStats.games.length - 1 - idx]
+                                            if (targetGame && targetGame.timestamp) {
+                                                return `${label}번째 대국 (${formatTimestamp(targetGame.timestamp)})`
+                                            }
+                                            return `${label}번째 대국`
+                                        }}
+                                    />
+                                    <Line yAxisId="left" type="monotone" dataKey="luck" stroke="#a855f7" strokeWidth={2} name="운 점수" />
+                                    <Line yAxisId="right" type="monotone" dataKey="rank" stroke="#f59e0b" strokeWidth={2} name="순위" />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        ) : (
+                            <div className="h-[280px] w-full flex items-center justify-center text-xs text-slate-500">
+                                차트 로딩 중...
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -722,23 +733,29 @@ export default function DashboardPage(): React.ReactElement {
                             </span>
                         )}
                     </div>
-                    <div className="h-64 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                                <XAxis type="number" dataKey="luck" domain={[0, 100]} name="운 점수" stroke="#64748b" />
-                                <YAxis type="number" dataKey="skill" domain={[0, 100]} name="실력 점수" stroke="#64748b" />
-                                <ZAxis range={[60, 60]} />
-                                <ReferenceLine x={50} stroke="#475569" strokeDasharray="4 4" />
-                                <ReferenceLine y={50} stroke="#475569" strokeDasharray="4 4" />
-                                <Tooltip
-                                    cursor={{ strokeDasharray: '3 3' }}
-                                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
-                                    formatter={(value, name) => [value, name === 'luck' ? '운 점수' : '실력 점수']}
-                                />
-                                <Scatter name="대국 데이터" data={scatterData} fill="#f59e0b" />
-                            </ScatterChart>
-                        </ResponsiveContainer>
+                    <div className="h-64 w-full min-h-[280px]">
+                        {isMounted ? (
+                            <ResponsiveContainer width="100%" height="100%" minHeight={280}>
+                                <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                                    <XAxis type="number" dataKey="luck" domain={[0, 100]} name="운 점수" stroke="#64748b" />
+                                    <YAxis type="number" dataKey="skill" domain={[0, 100]} name="실력 점수" stroke="#64748b" />
+                                    <ZAxis range={[60, 60]} />
+                                    <ReferenceLine x={50} stroke="#475569" strokeDasharray="4 4" />
+                                    <ReferenceLine y={50} stroke="#475569" strokeDasharray="4 4" />
+                                    <Tooltip
+                                        cursor={{ strokeDasharray: '3 3' }}
+                                        contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
+                                        formatter={(value, name) => [value, name === 'luck' ? '운 점수' : '실력 점수']}
+                                    />
+                                    <Scatter name="대국 데이터" data={scatterData} fill="#f59e0b" />
+                                </ScatterChart>
+                            </ResponsiveContainer>
+                        ) : (
+                            <div className="h-[280px] w-full flex items-center justify-center text-xs text-slate-500">
+                                차트 로딩 중...
+                            </div>
+                        )}
                     </div>
                     <div className="grid grid-cols-2 gap-2.5 text-xs text-slate-400 mt-3">
                         <div className="bg-slate-800/50 p-2.5 rounded-xl border border-slate-700/50 flex flex-col justify-between">
