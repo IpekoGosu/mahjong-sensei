@@ -340,7 +340,7 @@ export function PaipuRoundInspectorModal({
                                                 </span>
                                                 <div className="flex items-center gap-1.5">
                                                     {currentRound.doraIndicators.map((d, dIdx) => (
-                                                        <MahjongTile key={dIdx} tile={d} isDora={true} />
+                                                        <MahjongTile key={`dora-${activeRoundIndex}-${d}-${dIdx}`} tile={d} isDora={true} />
                                                     ))}
                                                 </div>
                                             </div>
@@ -392,7 +392,7 @@ export function PaipuRoundInspectorModal({
                                                     <div className="flex flex-wrap items-center gap-1 pt-1">
                                                         {currentRound.result.yakuList.map((y, yIdx) => (
                                                             <span
-                                                                key={yIdx}
+                                                                key={`yaku-${activeRoundIndex}-${y}-${yIdx}`}
                                                                 className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20"
                                                             >
                                                                 {y}
@@ -482,7 +482,7 @@ export function PaipuRoundInspectorModal({
                                                                     <span className="text-xs text-slate-500">배패 기록 없음</span>
                                                                 ) : (
                                                                     hand.map((tile, tIdx) => (
-                                                                        <MahjongTile key={tIdx} tile={tile} />
+                                                                        <MahjongTile key={`${activeRoundIndex}-${seat}-${tile}-${tIdx}`} tile={tile} />
                                                                     ))
                                                                 )}
                                                             </div>
