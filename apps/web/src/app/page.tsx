@@ -6,7 +6,8 @@ import {
     RollingWindowSize,
     RollingWindowStats,
     PerformanceQuadrant,
-    GameCoachingReport
+    GameCoachingReport,
+    BatchImportPaipuResult
 } from '@mahjong-sensei/types'
 import {
     TrendingUp,
@@ -166,27 +167,50 @@ export default function DashboardPage(): React.ReactElement {
     }
 
     const handleBatchImport = async (): Promise<void> => {
-        const lines = batchInput.split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
-        if (lines.length === 0) {
+        const rawLines = batchInput.split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
+        const uniqueLines = Array.from(new Set(rawLines))
+        if (uniqueLines.length === 0) {
             return
         }
 
         setImporting(true)
-        setStatusMessage(`${lines.length}개의 실제 패보 일괄 등록 및 정밀 분석 중...`)
+        setStatusMessage(`${uniqueLines.length}개의 실제 패보 일괄 등록 및 정밀 분석 중...`)
 
         try {
             const res = await fetch(`${apiUrl}/paipu/import-batch`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ inputs: lines })
+                body: JSON.stringify({ inputs: uniqueLines })
             })
 
             if (res.ok) {
-                const data = (await res.json()) as { imported: number; total: number }
-                setStatusMessage(`✅ 총 ${data.imported}/${data.total}개의 패보가 성공적으로 등록 및 분석되었습니다!`)
-                setBatchInput('')
-                setBatchModalOpen(false)
-                fetchStats(accountId, windowSize, gameMode)
+                const data = (await res.json()) as BatchImportPaipuResult
+                const parts: string[] = []
+                if (data.imported > 0) {
+                    parts.push(`신규 등록 ${data.imported}건`)
+                }
+                if (data.existing > 0) {
+                    parts.push(`기존 등록 ${data.existing}건`)
+                }
+                if (data.failed > 0) {
+                    parts.push(`실패 ${data.failed}건`)
+                }
+                if (parts.length === 0) {
+                    parts.push('처리 내역 없음')
+                }
+
+                const isAllFailed = data.imported === 0 && data.existing === 0 && data.failed > 0
+                const isPartialFailed = data.failed > 0
+                const icon = isAllFailed ? '❌' : isPartialFailed ? '⚠️' : '✅'
+
+                setStatusMessage(`${icon} 총 ${data.total}개 중 ${parts.join(', ')} 처리되었습니다.`)
+
+                // 하나라도 신규 또는 기존 등록이 성공했을 때만 모달을 닫고 입력을 초기화
+                if (data.imported > 0 || data.existing > 0) {
+                    setBatchInput('')
+                    setBatchModalOpen(false)
+                    void fetchStats(accountId, windowSize, gameMode)
+                }
             } else {
                 setStatusMessage('⚠️ 패보 일괄 등록 중 일부 실패가 발생했습니다.')
             }

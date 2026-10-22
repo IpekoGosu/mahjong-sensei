@@ -11,7 +11,8 @@ import {
     PaipuRound,
     PaipuRoundResult,
     PaipuRoundMetricSummary,
-    SeatIndex
+    SeatIndex,
+    BatchImportPaipuResult
 } from '@mahjong-sensei/types'
 
 export interface GameWithDetailRelations {
@@ -255,23 +256,59 @@ export class PaipuService {
     }
 
 
-    public async importBatch(inputs: readonly string[]): Promise<{
-        total: number
-        imported: number
-        failed: number
-        gameIds: readonly string[]
-    }> {
+    protected async findExistingGameIds(uuids: readonly string[]): Promise<Set<string>> {
+        if (uuids.length === 0) {
+            return new Set<string>()
+        }
+        const existingGames = await this.prisma.game.findMany({
+            where: { id: { in: Array.from(uuids) } },
+            select: { id: true }
+        })
+        return new Set<string>(existingGames.map((g) => g.id))
+    }
+
+    public async importBatch(inputs: readonly string[]): Promise<BatchImportPaipuResult> {
         const gameIds: string[] = []
         let imported = 0
+        let existing = 0
         let failed = 0
+
+        /*_ GEMINI THINKING _*/
+        // 입력 목록에서 중복 문자열 및 UUID를 사전 추출/제거하여 불필요한 N+1 쿼리 및 중복 실패 카운트 방지
+        const seenRawInputs = new Set<string>()
+        const seenUuids = new Set<string>()
+        const validItems: { readonly input: string; readonly uuid: string }[] = []
 
         for (const input of inputs) {
             const trimmed = input.trim()
-            if (!trimmed) {
+            if (!trimmed || seenRawInputs.has(trimmed)) {
                 continue
             }
+            seenRawInputs.add(trimmed)
+
             try {
-                const res = await this.importPaipu(trimmed)
+                const uuid = this.extractUuid(trimmed)
+                if (seenUuids.has(uuid)) {
+                    continue
+                }
+                seenUuids.add(uuid)
+                validItems.push({ input: trimmed, uuid })
+            } catch {
+                failed++
+            }
+        }
+
+        const existingIdSet = await this.findExistingGameIds(Array.from(seenUuids))
+
+        for (const item of validItems) {
+            if (existingIdSet.has(item.uuid)) {
+                existing++
+                gameIds.push(item.uuid)
+                continue
+            }
+
+            try {
+                const res = await this.importPaipu(item.input)
                 if (res.success) {
                     imported++
                     gameIds.push(res.gameId)
@@ -284,8 +321,9 @@ export class PaipuService {
         }
 
         return {
-            total: imported + failed,
+            total: imported + existing + failed,
             imported,
+            existing,
             failed,
             gameIds
         }
