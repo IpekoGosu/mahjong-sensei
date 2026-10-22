@@ -33,6 +33,7 @@ export class PaipuController {
     public async importBatch(@Body(new ImportBatchPaipuPipe()) dto: ImportBatchPaipuDto): Promise<{
         readonly total: number
         readonly imported: number
+        readonly existing: number
         readonly failed: number
         readonly gameIds: readonly string[]
     }> {

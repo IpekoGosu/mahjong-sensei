@@ -255,15 +255,29 @@ export class PaipuService {
     }
 
 
+    protected async findExistingGame(gameId: string): Promise<{ readonly id: string } | null> {
+        return await this.prisma.game.findUnique({
+            where: { id: gameId },
+            select: { id: true }
+        })
+    }
+
     public async importBatch(inputs: readonly string[]): Promise<{
-        total: number
-        imported: number
-        failed: number
-        gameIds: readonly string[]
+        readonly total: number
+        readonly imported: number
+        readonly existing: number
+        readonly failed: number
+        readonly gameIds: readonly string[]
     }> {
         const gameIds: string[] = []
         let imported = 0
+        let existing = 0
         let failed = 0
+
+        /*_ GEMINI THINKING _*/
+        // 입력 목록에서 UUID를 사전 추출하고 중복을 제거하여 불필요한 중복 쿼리 및 중복 삽입 방지
+        const seenUuids = new Set<string>()
+        const validItems: { readonly input: string; readonly uuid: string }[] = []
 
         for (const input of inputs) {
             const trimmed = input.trim()
@@ -271,7 +285,27 @@ export class PaipuService {
                 continue
             }
             try {
-                const res = await this.importPaipu(trimmed)
+                const uuid = this.extractUuid(trimmed)
+                if (seenUuids.has(uuid)) {
+                    continue
+                }
+                seenUuids.add(uuid)
+                validItems.push({ input: trimmed, uuid })
+            } catch {
+                failed++
+            }
+        }
+
+        for (const item of validItems) {
+            try {
+                const existingGame = await this.findExistingGame(item.uuid)
+                if (existingGame) {
+                    existing++
+                    gameIds.push(existingGame.id)
+                    continue
+                }
+
+                const res = await this.importPaipu(item.input)
                 if (res.success) {
                     imported++
                     gameIds.push(res.gameId)
@@ -284,8 +318,9 @@ export class PaipuService {
         }
 
         return {
-            total: imported + failed,
+            total: imported + existing + failed,
             imported,
+            existing,
             failed,
             gameIds
         }

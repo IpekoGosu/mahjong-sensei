@@ -166,24 +166,37 @@ export default function DashboardPage(): React.ReactElement {
     }
 
     const handleBatchImport = async (): Promise<void> => {
-        const lines = batchInput.split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
-        if (lines.length === 0) {
+        const rawLines = batchInput.split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
+        const uniqueLines = Array.from(new Set(rawLines))
+        if (uniqueLines.length === 0) {
             return
         }
 
         setImporting(true)
-        setStatusMessage(`${lines.length}개의 실제 패보 일괄 등록 및 정밀 분석 중...`)
+        setStatusMessage(`${uniqueLines.length}개의 실제 패보 일괄 등록 및 정밀 분석 중...`)
 
         try {
             const res = await fetch(`${apiUrl}/paipu/import-batch`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ inputs: lines })
+                body: JSON.stringify({ inputs: uniqueLines })
             })
 
             if (res.ok) {
-                const data = (await res.json()) as { imported: number; total: number }
-                setStatusMessage(`✅ 총 ${data.imported}/${data.total}개의 패보가 성공적으로 등록 및 분석되었습니다!`)
+                const data = (await res.json()) as {
+                    readonly imported: number
+                    readonly total: number
+                    readonly existing?: number
+                    readonly failed?: number
+                }
+                const parts: string[] = [`신규 등록 ${data.imported}건`]
+                if (data.existing && data.existing > 0) {
+                    parts.push(`기존 등록 ${data.existing}건`)
+                }
+                if (data.failed && data.failed > 0) {
+                    parts.push(`실패 ${data.failed}건`)
+                }
+                setStatusMessage(`✅ 총 ${data.total}개 중 ${parts.join(', ')} 처리되었습니다.`)
                 setBatchInput('')
                 setBatchModalOpen(false)
                 fetchStats(accountId, windowSize, gameMode)

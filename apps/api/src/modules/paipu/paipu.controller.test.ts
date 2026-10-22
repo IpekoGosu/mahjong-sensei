@@ -53,12 +53,14 @@ class MockPaipuService extends PaipuService {
     public override async importBatch(inputs: readonly string[]): Promise<{
         readonly total: number
         readonly imported: number
+        readonly existing: number
         readonly failed: number
         readonly gameIds: readonly string[]
     }> {
         return {
             total: inputs.length,
             imported: inputs.length,
+            existing: 0,
             failed: 0,
             gameIds: inputs
         }
@@ -473,5 +475,49 @@ test('PaipuService - getPaipuDetail generates synthetic round detail with result
     assert.ok(round0.roundMetrics !== undefined)
     assert.strictEqual(round0.roundMetrics.length, 3)
     assert.strictEqual(round0.roundMetrics[0]?.startingShanten, 1)
+})
+
+class MockBatchDeduplicationService extends PaipuService {
+    public readonly importedGameIds: string[] = []
+    public readonly existingDbGameIds: Set<string> = new Set<string>(['existing-game-uuid'])
+
+    public constructor() {
+        super(new MockPrismaService())
+    }
+
+    protected override async findExistingGame(gameId: string): Promise<{ readonly id: string } | null> {
+        if (this.existingDbGameIds.has(gameId)) {
+            return { id: gameId }
+        }
+        return null
+    }
+
+    public override async importPaipu(urlOrUuid: string): Promise<{ success: boolean; gameId: string }> {
+        const uuid = this.extractUuid(urlOrUuid)
+        this.importedGameIds.push(uuid)
+        return { success: true, gameId: uuid }
+    }
+}
+
+test('PaipuService - importBatch deduplicates inputs and categorizes new, existing, and failed', async () => {
+    const service = new MockBatchDeduplicationService()
+
+    const inputs = [
+        'https://game.maj-soul.com/1/?paipu=new-game-1',
+        'new-game-1', // duplicate of new-game-1
+        '  existing-game-uuid  ', // existing in DB
+        'https://game.maj-soul.com/1/?paipu=existing-game-uuid', // duplicate of existing
+        'new-game-2',
+        '   ' // blank line, ignored by trim
+    ]
+
+    const result = await service.importBatch(inputs)
+
+    assert.strictEqual(result.total, 3)
+    assert.strictEqual(result.imported, 2)
+    assert.strictEqual(result.existing, 1)
+    assert.strictEqual(result.failed, 0)
+    assert.deepStrictEqual(result.gameIds, ['new-game-1', 'existing-game-uuid', 'new-game-2'])
+    assert.deepStrictEqual(service.importedGameIds, ['new-game-1', 'new-game-2'])
 })
 
