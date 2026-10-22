@@ -1,8 +1,16 @@
 /*_ GEMINI THINKING _*/
 import test from 'node:test'
 import assert from 'node:assert'
+import { Prisma } from '@prisma/client'
 import { NotFoundException } from '@nestjs/common'
-import { AnalysisService, ParticipantWithGameRounds, GameWithCoachingRelations } from './analysis.service'
+import {
+    AnalysisService,
+    ParticipantWithGameRounds,
+    GameWithCoachingRelations,
+    is3PRoom,
+    buildRoomFilter,
+    THREE_PLAYER_ROOM_KEYWORDS
+} from './analysis.service'
 import { PrismaService } from '../../prisma/prisma.service'
 import { SeatIndex, RollingWindowSize } from '@mahjong-sensei/types'
 import { SAMPLE_MAJSOUL_GAME, LiqiBinaryDecoder } from '@mahjong-sensei/mahjong-core'
@@ -16,6 +24,7 @@ class MockPrismaService extends PrismaService {
 class MockAnalysisService extends AnalysisService {
     public mockParticipants: readonly ParticipantWithGameRounds[] = []
     public mockGame: GameWithCoachingRelations | null = null
+    public lastGameFilter: Prisma.GameWhereInput | null = null
 
     public constructor() {
         super(new MockPrismaService())
@@ -23,9 +32,10 @@ class MockAnalysisService extends AnalysisService {
 
     protected override async fetchParticipants(
         _accountId: number,
-        _roomFilter: { readonly contains: string } | { readonly not: { readonly contains: string } },
+        gameFilter: Prisma.GameWhereInput,
         _windowSize: RollingWindowSize
     ): Promise<readonly ParticipantWithGameRounds[]> {
+        this.lastGameFilter = gameFilter
         return this.mockParticipants
     }
 
@@ -297,4 +307,91 @@ test('AnalysisService - getCoachingReport analyzes rawProtobuf game with Coachin
     assert.ok(report.overallSummaryKo.length > 0)
     assert.ok(report.actionableAdviceKo.length > 0)
 })
+
+test('AnalysisService - is3PRoom correctly detects multilingual 3P rooms', () => {
+    // 3-Player indicators across languages
+    assert.strictEqual(is3PRoom('3인 옥탁 동풍전'), true)
+    assert.strictEqual(is3PRoom('Jade 3-Player South'), true)
+    assert.strictEqual(is3PRoom('3P Gold East'), true)
+    assert.strictEqual(is3PRoom('3人南'), true)
+    assert.strictEqual(is3PRoom('3人東'), true)
+    assert.strictEqual(is3PRoom('Sanma Silver South'), true)
+    assert.strictEqual(is3PRoom('삼마 반장전'), true)
+
+    // 4-Player rooms should not match 3P
+    assert.strictEqual(is3PRoom('4인 왕탁 동풍전'), false)
+    assert.strictEqual(is3PRoom('4-Player Jade South'), false)
+    assert.strictEqual(is3PRoom('4人南'), false)
+    assert.strictEqual(is3PRoom('옥탁 반장전'), false)
+    assert.strictEqual(is3PRoom('금탁 동풍전'), false)
+})
+
+test('AnalysisService - buildRoomFilter constructs accurate Prisma where filters', () => {
+    const filter3p = buildRoomFilter('3p')
+    assert.ok(Array.isArray(filter3p.OR))
+    assert.strictEqual(filter3p.OR.length, THREE_PLAYER_ROOM_KEYWORDS.length)
+
+    const filter4p = buildRoomFilter('4p')
+    assert.ok(Array.isArray(filter4p.AND))
+    assert.strictEqual(filter4p.AND.length, THREE_PLAYER_ROOM_KEYWORDS.length)
+})
+
+test('AnalysisService - Multilingual 3P vs 4P room filtering in getRollingStats', async () => {
+    const service = new MockAnalysisService()
+
+    const mock3PGames: ParticipantWithGameRounds[] = [
+        {
+            id: 'p-3p-en',
+            gameId: 'game-3p-en',
+            playerId: 'player-1',
+            seat: 0 as SeatIndex,
+            finalScore: 15000,
+            finalRank: 3, // In 3P, rank 3 is last place!
+            luckScore: 40,
+            skillScore: 50,
+            game: {
+                id: 'game-3p-en',
+                roomType: 'Jade 3-Player South',
+                gameDate: new Date(1720000000000),
+                rounds: []
+            }
+        }
+    ]
+
+    service.mockParticipants = mock3PGames
+    const stats3p = await service.getRollingStats(10001, 10, '3p')
+
+    assert.strictEqual(stats3p.gameMode, '3p')
+    assert.strictEqual(stats3p.totalGames, 1)
+    assert.strictEqual(stats3p.lastPlaceRate, 100.0) // rank 3 counted as last place
+    assert.ok(service.lastGameFilter?.OR !== undefined)
+
+    const mock4PGames: ParticipantWithGameRounds[] = [
+        {
+            id: 'p-4p-en',
+            gameId: 'game-4p-en',
+            playerId: 'player-1',
+            seat: 0 as SeatIndex,
+            finalScore: 25000,
+            finalRank: 3, // In 4P, rank 3 is NOT last place (rank 4 is last place)
+            luckScore: 50,
+            skillScore: 55,
+            game: {
+                id: 'game-4p-en',
+                roomType: '4-Player Jade South',
+                gameDate: new Date(1720000000000),
+                rounds: []
+            }
+        }
+    ]
+
+    service.mockParticipants = mock4PGames
+    const stats4p = await service.getRollingStats(10001, 10, '4p')
+
+    assert.strictEqual(stats4p.gameMode, '4p')
+    assert.strictEqual(stats4p.totalGames, 1)
+    assert.strictEqual(stats4p.lastPlaceRate, 0.0) // rank 3 is not last place in 4P
+    assert.ok(service.lastGameFilter?.AND !== undefined)
+})
+
 

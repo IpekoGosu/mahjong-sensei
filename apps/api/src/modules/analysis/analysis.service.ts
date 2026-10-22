@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common'
+import { Prisma } from '@prisma/client'
 import { PrismaService } from '../../prisma/prisma.service'
 import {
     GameMode,
@@ -89,6 +90,31 @@ export type GameWithCoachingRelations = {
     }[]
 }
 
+/*_ GEMINI THINKING _*/
+// 다국어 마작 환경(한국어, 영어, 일본어 등)에서 3인 마작 룸 타입을 안전하게 식별하기 위한 키워드 목록
+export const THREE_PLAYER_ROOM_KEYWORDS = ['3인', '3P', '3-Player', '3人', 'Sanma', '삼마'] as const
+
+export function is3PRoom(roomType: string): boolean {
+    const lower = roomType.toLowerCase()
+    return THREE_PLAYER_ROOM_KEYWORDS.some(k => lower.includes(k.toLowerCase()))
+}
+
+export function buildRoomFilter(mode: GameMode): Prisma.GameWhereInput {
+    if (mode === '3p') {
+        return {
+            OR: THREE_PLAYER_ROOM_KEYWORDS.map(keyword => ({
+                roomType: { contains: keyword, mode: 'insensitive' as const }
+            }))
+        }
+    }
+
+    return {
+        AND: THREE_PLAYER_ROOM_KEYWORDS.map(keyword => ({
+            roomType: { not: { contains: keyword, mode: 'insensitive' as const } }
+        }))
+    }
+}
+
 
 @Injectable()
 export class AnalysisService {
@@ -102,15 +128,13 @@ export class AnalysisService {
 
     protected async fetchParticipants(
         accountId: number,
-        roomFilter: { readonly contains: string } | { readonly not: { readonly contains: string } },
+        gameFilter: Prisma.GameWhereInput,
         windowSize: RollingWindowSize
     ): Promise<readonly ParticipantWithGameRounds[]> {
         return this.prisma.gameParticipant.findMany({
             where: {
                 player: { accountId },
-                game: {
-                    roomType: roomFilter
-                }
+                game: gameFilter
             },
             include: {
                 game: {
@@ -135,11 +159,9 @@ export class AnalysisService {
         windowSize: RollingWindowSize,
         mode: GameMode = '3p'
     ): Promise<RollingWindowStats> {
-        const roomFilter = mode === '3p'
-            ? { contains: '3인' }
-            : { not: { contains: '3인' } }
+        const gameFilter = buildRoomFilter(mode)
 
-        const participants = await this.fetchParticipants(accountId, roomFilter, windowSize)
+        const participants = await this.fetchParticipants(accountId, gameFilter, windowSize)
 
         if (participants.length === 0) {
             return {
@@ -248,9 +270,10 @@ export class AnalysisService {
             /*_ GEMINI THINKING _*/
             // 단일 라운드만 저장된 합성 대국(rounds.length <= 1 또는 myRoundsCount <= 1)의 경우
             // roomType을 참조하여 동풍전은 4국, 반장전은 8국을 표준 분모로 사용하여 공수 평점 극단화 방지
+            const isEastWind = p.game.roomType?.includes('동풍') || p.game.roomType?.includes('East') || p.game.roomType?.includes('東')
             const effectiveTotalRounds = (p.game.rounds.length > 1 && myRoundsCount > 1)
                 ? p.game.rounds.length
-                : (p.game.roomType?.includes('동풍') ? 4 : 8)
+                : (isEastWind ? 4 : 8)
 
             const aiEvaluation = this.aiRankEvaluator.evaluateSummaryGame({
                 rank: p.finalRank,
@@ -394,7 +417,7 @@ export class AnalysisService {
             targetSeat = game.participants[0].seat
         }
 
-        const is3P = game.roomType.includes('3인') || game.participants.length === 3
+        const is3P = is3PRoom(game.roomType) || game.participants.length === 3
 
         if (game.rawProtobuf && game.rawProtobuf.length > 0) {
             const decoder = new LiqiBinaryDecoder()
