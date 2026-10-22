@@ -77,3 +77,11 @@ export interface PaipuDetail {
     readonly players: readonly PlayerSummary[]
     readonly rounds: readonly PaipuRound[]
 }
+
+export interface BatchImportPaipuResult {
+    readonly total: number
+    readonly imported: number
+    readonly existing: number
+    readonly failed: number
+    readonly gameIds: readonly string[]
+}

@@ -8,6 +8,7 @@ import { ImportPaipuDto, ImportPaipuPipe } from './dto/import-paipu.dto'
 import { ImportBatchPaipuDto, ImportBatchPaipuPipe } from './dto/import-batch-paipu.dto'
 import { UploadPaipuDto, UploadPaipuPipe } from './dto/upload-paipu.dto'
 import { SAMPLE_MAJSOUL_GAME, LiqiBinaryDecoder } from '@mahjong-sensei/mahjong-core'
+import { BatchImportPaipuResult } from '@mahjong-sensei/types'
 
 class MockPrismaService extends PrismaService {
     public constructor() {
@@ -50,13 +51,7 @@ class MockPaipuService extends PaipuService {
         return { success: true, gameId: 'uploaded-game-uuid' }
     }
 
-    public override async importBatch(inputs: readonly string[]): Promise<{
-        readonly total: number
-        readonly imported: number
-        readonly existing: number
-        readonly failed: number
-        readonly gameIds: readonly string[]
-    }> {
+    public override async importBatch(inputs: readonly string[]): Promise<BatchImportPaipuResult> {
         return {
             total: inputs.length,
             imported: inputs.length,
@@ -485,15 +480,21 @@ class MockBatchDeduplicationService extends PaipuService {
         super(new MockPrismaService())
     }
 
-    protected override async findExistingGame(gameId: string): Promise<{ readonly id: string } | null> {
-        if (this.existingDbGameIds.has(gameId)) {
-            return { id: gameId }
+    protected override async findExistingGameIds(uuids: readonly string[]): Promise<Set<string>> {
+        const found = new Set<string>()
+        for (const u of uuids) {
+            if (this.existingDbGameIds.has(u)) {
+                found.add(u)
+            }
         }
-        return null
+        return found
     }
 
     public override async importPaipu(urlOrUuid: string): Promise<{ success: boolean; gameId: string }> {
         const uuid = this.extractUuid(urlOrUuid)
+        if (uuid.includes('fail-import')) {
+            throw new Error('Import failed')
+        }
         this.importedGameIds.push(uuid)
         return { success: true, gameId: uuid }
     }
@@ -508,15 +509,18 @@ test('PaipuService - importBatch deduplicates inputs and categorizes new, existi
         '  existing-game-uuid  ', // existing in DB
         'https://game.maj-soul.com/1/?paipu=existing-game-uuid', // duplicate of existing
         'new-game-2',
-        '   ' // blank line, ignored by trim
+        'fail-import-game',
+        'fail-import-game', // duplicate of failing input
+        '   ', // blank line, ignored by trim
+        '' // empty line
     ]
 
     const result = await service.importBatch(inputs)
 
-    assert.strictEqual(result.total, 3)
-    assert.strictEqual(result.imported, 2)
-    assert.strictEqual(result.existing, 1)
-    assert.strictEqual(result.failed, 0)
+    assert.strictEqual(result.total, 4) // new-game-1, existing-game-uuid, new-game-2, fail-import-game
+    assert.strictEqual(result.imported, 2) // new-game-1, new-game-2
+    assert.strictEqual(result.existing, 1) // existing-game-uuid
+    assert.strictEqual(result.failed, 1) // fail-import-game (deduplicated!)
     assert.deepStrictEqual(result.gameIds, ['new-game-1', 'existing-game-uuid', 'new-game-2'])
     assert.deepStrictEqual(service.importedGameIds, ['new-game-1', 'new-game-2'])
 })

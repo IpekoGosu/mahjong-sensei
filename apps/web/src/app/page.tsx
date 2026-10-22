@@ -6,7 +6,8 @@ import {
     RollingWindowSize,
     RollingWindowStats,
     PerformanceQuadrant,
-    GameCoachingReport
+    GameCoachingReport,
+    BatchImportPaipuResult
 } from '@mahjong-sensei/types'
 import {
     TrendingUp,
@@ -183,23 +184,33 @@ export default function DashboardPage(): React.ReactElement {
             })
 
             if (res.ok) {
-                const data = (await res.json()) as {
-                    readonly imported: number
-                    readonly total: number
-                    readonly existing?: number
-                    readonly failed?: number
+                const data = (await res.json()) as BatchImportPaipuResult
+                const parts: string[] = []
+                if (data.imported > 0) {
+                    parts.push(`신규 등록 ${data.imported}건`)
                 }
-                const parts: string[] = [`신규 등록 ${data.imported}건`]
-                if (data.existing && data.existing > 0) {
+                if (data.existing > 0) {
                     parts.push(`기존 등록 ${data.existing}건`)
                 }
-                if (data.failed && data.failed > 0) {
+                if (data.failed > 0) {
                     parts.push(`실패 ${data.failed}건`)
                 }
-                setStatusMessage(`✅ 총 ${data.total}개 중 ${parts.join(', ')} 처리되었습니다.`)
-                setBatchInput('')
-                setBatchModalOpen(false)
-                fetchStats(accountId, windowSize, gameMode)
+                if (parts.length === 0) {
+                    parts.push('처리 내역 없음')
+                }
+
+                const isAllFailed = data.imported === 0 && data.existing === 0 && data.failed > 0
+                const isPartialFailed = data.failed > 0
+                const icon = isAllFailed ? '❌' : isPartialFailed ? '⚠️' : '✅'
+
+                setStatusMessage(`${icon} 총 ${data.total}개 중 ${parts.join(', ')} 처리되었습니다.`)
+
+                // 하나라도 신규 또는 기존 등록이 성공했을 때만 모달을 닫고 입력을 초기화
+                if (data.imported > 0 || data.existing > 0) {
+                    setBatchInput('')
+                    setBatchModalOpen(false)
+                    void fetchStats(accountId, windowSize, gameMode)
+                }
             } else {
                 setStatusMessage('⚠️ 패보 일괄 등록 중 일부 실패가 발생했습니다.')
             }

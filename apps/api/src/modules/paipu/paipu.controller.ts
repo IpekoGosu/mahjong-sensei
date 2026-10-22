@@ -3,7 +3,7 @@ import { PaipuService } from './paipu.service'
 import { ImportPaipuDto, ImportPaipuPipe } from './dto/import-paipu.dto'
 import { ImportBatchPaipuDto, ImportBatchPaipuPipe } from './dto/import-batch-paipu.dto'
 import { UploadPaipuDto, UploadPaipuPipe } from './dto/upload-paipu.dto'
-import { PaipuDetail } from '@mahjong-sensei/types'
+import { PaipuDetail, BatchImportPaipuResult } from '@mahjong-sensei/types'
 
 @Controller('paipu')
 export class PaipuController {
@@ -30,13 +30,7 @@ export class PaipuController {
 
 
     @Post('import-batch')
-    public async importBatch(@Body(new ImportBatchPaipuPipe()) dto: ImportBatchPaipuDto): Promise<{
-        readonly total: number
-        readonly imported: number
-        readonly existing: number
-        readonly failed: number
-        readonly gameIds: readonly string[]
-    }> {
+    public async importBatch(@Body(new ImportBatchPaipuPipe()) dto: ImportBatchPaipuDto): Promise<BatchImportPaipuResult> {
         /*_ GEMINI THINKING _*/
         const validated = ImportBatchPaipuDto.validate(dto)
         return await this.paipuService.importBatch(validated.inputs)
