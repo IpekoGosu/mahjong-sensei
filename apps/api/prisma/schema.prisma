@@ -88,7 +88,6 @@ model RoundMetric {
 
     round Round @relation(fields: [roundId], references: [id], onDelete: Cascade)
 
-    @@index([roundId])
-    @@index([roundId, seat])
+    @@unique([roundId, seat])
     @@map("round_metrics")
 }
