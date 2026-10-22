@@ -689,7 +689,7 @@ export default function DashboardPage(): React.ReactElement {
                         <TrendingUp className="w-5 h-5 text-amber-500" />
                         판별 운(Luck) vs 순위(Rank) 추세 ({gameMode === '3p' ? '3인' : '4인'})
                     </h2>
-                    <div className="h-64 w-full min-h-[280px]">
+                    <div className="h-[280px] w-full min-h-[280px]">
                         {isMounted ? (
                             <ResponsiveContainer width="100%" height="100%" minHeight={280}>
                                 <LineChart data={chartData}>
@@ -733,7 +733,7 @@ export default function DashboardPage(): React.ReactElement {
                             </span>
                         )}
                     </div>
-                    <div className="h-64 w-full min-h-[280px]">
+                    <div className="h-[280px] w-full min-h-[280px]">
                         {isMounted ? (
                             <ResponsiveContainer width="100%" height="100%" minHeight={280}>
                                 <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
