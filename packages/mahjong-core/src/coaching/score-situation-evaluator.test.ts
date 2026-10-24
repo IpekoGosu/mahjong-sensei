@@ -33,25 +33,25 @@ nodeTest('ScoreSituationEvaluator - isOrasu correctly identifies All-Last for 3P
     const evaluator = new ScoreSituationEvaluator()
 
     // 3P Hanchan (South 3 is Orasu: chang 1, ju 2)
-    assert.equal(evaluator.isOrasu(1, 2, true, false), true)
+    assert.strictEqual(evaluator.isOrasu(1, 2, true, false), true)
     // 3P South 3 renchan (ju >= 2)
-    assert.equal(evaluator.isOrasu(1, 3, true, false), true)
+    assert.strictEqual(evaluator.isOrasu(1, 3, true, false), true)
     // 3P South 1 or 2 is NOT Orasu
-    assert.equal(evaluator.isOrasu(1, 0, true, false), false)
-    assert.equal(evaluator.isOrasu(1, 1, true, false), false)
+    assert.strictEqual(evaluator.isOrasu(1, 0, true, false), false)
+    assert.strictEqual(evaluator.isOrasu(1, 1, true, false), false)
 
     // 3P Tonpuusen (East 3 is Orasu if isEastOnly: chang 0, ju 2)
-    assert.equal(evaluator.isOrasu(0, 2, true, true), true)
+    assert.strictEqual(evaluator.isOrasu(0, 2, true, true), true)
     // 3P East 1 or 2 is NOT Orasu in Tonpuusen
-    assert.equal(evaluator.isOrasu(0, 0, true, true), false)
-    assert.equal(evaluator.isOrasu(0, 1, true, true), false)
+    assert.strictEqual(evaluator.isOrasu(0, 0, true, true), false)
+    assert.strictEqual(evaluator.isOrasu(0, 1, true, true), false)
     // 3P East 3 is NOT Orasu if it's a Hanchan game
-    assert.equal(evaluator.isOrasu(0, 2, true, false), false)
+    assert.strictEqual(evaluator.isOrasu(0, 2, true, false), false)
 
     // 4P comparison (4P Orasu is ju 3)
-    assert.equal(evaluator.isOrasu(1, 2, false, false), false) // South 3 is NOT Orasu in 4P
-    assert.equal(evaluator.isOrasu(1, 3, false, false), true)  // South 4 is Orasu in 4P
-    assert.equal(evaluator.isOrasu(0, 3, false, true), true)   // East 4 is Orasu in Tonpuu 4P
+    assert.strictEqual(evaluator.isOrasu(1, 2, false, false), false) // South 3 is NOT Orasu in 4P
+    assert.strictEqual(evaluator.isOrasu(1, 3, false, false), true)  // South 4 is Orasu in 4P
+    assert.strictEqual(evaluator.isOrasu(0, 3, false, true), true)   // East 4 is Orasu in Tonpuu 4P
 })
 
 /*_ GEMINI THINKING _*/
@@ -62,25 +62,25 @@ nodeTest('ScoreSituationEvaluator - calculatePlayerScoreSituation evaluates 3P r
     const scores = [45000, 30000, 25000, 0] as const
 
     const sitSeat1 = mock.testCalculatePlayerScoreSituation(scores, 1, 2, true)
-    assert.equal(sitSeat1.rank, 2)
-    assert.equal(sitSeat1.score, 30000)
-    assert.equal(sitSeat1.scoreGapToFirst, 15000)
-    assert.equal(sitSeat1.scoreGapToThird, 5000)
-    assert.equal(sitSeat1.isDealer, false)
+    assert.strictEqual(sitSeat1.rank, 2)
+    assert.strictEqual(sitSeat1.score, 30000)
+    assert.strictEqual(sitSeat1.scoreGapToFirst, 15000)
+    assert.strictEqual(sitSeat1.scoreGapToThird, 5000)
+    assert.strictEqual(sitSeat1.isDealer, false)
 
     const sitSeat0 = mock.testCalculatePlayerScoreSituation(scores, 0, 0, true)
-    assert.equal(sitSeat0.rank, 1)
-    assert.equal(sitSeat0.score, 45000)
-    assert.equal(sitSeat0.scoreGapToFirst, 0)
-    assert.equal(sitSeat0.scoreGapToThird, 20000)
-    assert.equal(sitSeat0.isDealer, true)
+    assert.strictEqual(sitSeat0.rank, 1)
+    assert.strictEqual(sitSeat0.score, 45000)
+    assert.strictEqual(sitSeat0.scoreGapToFirst, 0)
+    assert.strictEqual(sitSeat0.scoreGapToThird, 20000)
+    assert.strictEqual(sitSeat0.isDealer, true)
 
     const sitSeat2 = mock.testCalculatePlayerScoreSituation(scores, 2, 2, true)
-    assert.equal(sitSeat2.rank, 3)
-    assert.equal(sitSeat2.score, 25000)
-    assert.equal(sitSeat2.scoreGapToFirst, 20000)
-    assert.equal(sitSeat2.scoreGapToThird, 0)
-    assert.equal(sitSeat2.isDealer, true) // ju 2 % 3 === 2 (Seat 2 is dealer)
+    assert.strictEqual(sitSeat2.rank, 3)
+    assert.strictEqual(sitSeat2.score, 25000)
+    assert.strictEqual(sitSeat2.scoreGapToFirst, 20000)
+    assert.strictEqual(sitSeat2.scoreGapToThird, 0)
+    assert.strictEqual(sitSeat2.isDealer, true) // ju 2 % 3 === 2 (Seat 2 is dealer)
 })
 
 /*_ GEMINI THINKING _*/
@@ -94,13 +94,13 @@ nodeTest('ScoreSituationEvaluator - calculatePlayerScoreSituation breaks ties by
     // Seat 2 dist = 1 (Rank 2)
     // Seat 0 dist = 2 (Rank 3)
     const sitDealer = mock.testCalculatePlayerScoreSituation(scores, 1, 1, true)
-    assert.equal(sitDealer.rank, 1)
+    assert.strictEqual(sitDealer.rank, 1)
 
     const sitNext = mock.testCalculatePlayerScoreSituation(scores, 2, 1, true)
-    assert.equal(sitNext.rank, 2)
+    assert.strictEqual(sitNext.rank, 2)
 
     const sitLast = mock.testCalculatePlayerScoreSituation(scores, 0, 1, true)
-    assert.equal(sitLast.rank, 3)
+    assert.strictEqual(sitLast.rank, 3)
 })
 
 /*_ GEMINI THINKING _*/
@@ -109,34 +109,34 @@ nodeTest('ScoreSituationEvaluator - assessOpponentThreat models Kita and high-va
 
     // 0 Kita, 0 meld doras, damaten
     const threat0 = mock.testAssessOpponentThreat(1, 0, 0, false)
-    assert.equal(threat0.exposedDoraCount, 0)
-    assert.equal(threat0.isHighValueThreat, false)
-    assert.equal(threat0.threatMultiplier, 1.0)
+    assert.strictEqual(threat0.exposedDoraCount, 0)
+    assert.strictEqual(threat0.isHighValueThreat, false)
+    assert.strictEqual(threat0.threatMultiplier, 1.0)
 
     // 1 Kita
     const threat1 = mock.testAssessOpponentThreat(1, 1, 0, false)
-    assert.equal(threat1.exposedDoraCount, 1)
-    assert.equal(threat1.isHighValueThreat, false)
-    assert.equal(threat1.threatMultiplier, 1.3)
+    assert.strictEqual(threat1.exposedDoraCount, 1)
+    assert.strictEqual(threat1.isHighValueThreat, false)
+    assert.strictEqual(threat1.threatMultiplier, 1.3)
 
     // 2 Kita: guaranteed Mangan threat (고타점 확정)
     const threat2 = mock.testAssessOpponentThreat(1, 2, 0, false)
-    assert.equal(threat2.exposedDoraCount, 2)
-    assert.equal(threat2.isHighValueThreat, true)
-    assert.equal(threat2.threatMultiplier, 1.7)
+    assert.strictEqual(threat2.exposedDoraCount, 2)
+    assert.strictEqual(threat2.isHighValueThreat, true)
+    assert.strictEqual(threat2.threatMultiplier, 1.7)
 
     // 3 Kita: Haneman/Baiman threat
     const threat3 = mock.testAssessOpponentThreat(1, 3, 0, false)
-    assert.equal(threat3.exposedDoraCount, 3)
-    assert.equal(threat3.isHighValueThreat, true)
-    assert.equal(threat3.threatMultiplier, 2.2)
+    assert.strictEqual(threat3.exposedDoraCount, 3)
+    assert.strictEqual(threat3.isHighValueThreat, true)
+    assert.strictEqual(threat3.threatMultiplier, 2.2)
 
     // 1 Kita + 1 meld dora (e.g. red dora): 2 exposed doras -> High Value Threat!
     const threatCombo = mock.testAssessOpponentThreat(1, 1, 1, true)
-    assert.equal(threatCombo.exposedDoraCount, 2)
-    assert.equal(threatCombo.isHighValueThreat, true)
+    assert.strictEqual(threatCombo.exposedDoraCount, 2)
+    assert.strictEqual(threatCombo.isHighValueThreat, true)
     // 1.7 * 1.25 for Riichi = 2.125 -> 2.13
-    assert.equal(threatCombo.threatMultiplier, 2.13)
+    assert.strictEqual(threatCombo.threatMultiplier, 2.13)
 })
 
 /*_ GEMINI THINKING _*/
@@ -165,8 +165,8 @@ nodeTest('ScoreSituationEvaluator - evaluate2ndPlaceDefenseRisk detects extreme 
 
     // Player is 1-shanten: pushing is EXTREME risk
     const decisionShanten1 = evaluator.evaluate2ndPlaceDefenseRisk(targetSit, opponentThreat, 1, 0.40)
-    assert.equal(decisionShanten1.shouldDefend, true)
-    assert.equal(decisionShanten1.riskLevel, 'EXTREME')
+    assert.strictEqual(decisionShanten1.shouldDefend, true)
+    assert.strictEqual(decisionShanten1.riskLevel, 'EXTREME')
     assert.ok(decisionShanten1.reasonKo.includes('3위와의 점수차'))
 
     // Target is rank 1: 2nd place defense model does not apply
@@ -175,8 +175,8 @@ nodeTest('ScoreSituationEvaluator - evaluate2ndPlaceDefenseRisk detects extreme 
         rank: 1
     }
     const decisionRank1 = evaluator.evaluate2ndPlaceDefenseRisk(targetRank1, opponentThreat, 1, 0.40)
-    assert.equal(decisionRank1.shouldDefend, false)
-    assert.equal(decisionRank1.riskLevel, 'LOW')
+    assert.strictEqual(decisionRank1.shouldDefend, false)
+    assert.strictEqual(decisionRank1.riskLevel, 'LOW')
 })
 
 /*_ GEMINI THINKING _*/
@@ -212,10 +212,10 @@ nodeTest('ScoreSituationEvaluator - evaluateDealInSituation catches fatal drop f
         9 // turnNumber
     )
 
-    assert.equal(result.mistakeCategory, 'ORASU_FATAL_DEAL_IN')
-    assert.equal(result.severityScore, 100)
-    assert.equal(result.droppedFrom2ndTo3rd, true)
-    assert.equal(result.situationScorePenalty, 45)
+    assert.strictEqual(result.mistakeCategory, 'ORASU_FATAL_DEAL_IN')
+    assert.strictEqual(result.severityScore, 100)
+    assert.strictEqual(result.droppedFrom2ndTo3rd, true)
+    assert.strictEqual(result.situationScorePenalty, 45)
     assert.ok(result.coachingMessageKo.includes('[오라스 치명적 판단 오류]'))
     assert.ok(result.coachingMessageKo.includes('3위(라스)로 추락했습니다'))
 })
@@ -254,8 +254,8 @@ nodeTest('ScoreSituationEvaluator - evaluateDealInSituation flags HIGH_VALUE_RIS
         8
     )
 
-    assert.equal(result.mistakeCategory, 'HIGH_VALUE_RISK_DEAL_IN')
-    assert.equal(result.droppedFrom2ndTo3rd, false)
+    assert.strictEqual(result.mistakeCategory, 'HIGH_VALUE_RISK_DEAL_IN')
+    assert.strictEqual(result.droppedFrom2ndTo3rd, false)
     assert.ok(result.severityScore >= 90)
     assert.ok(result.coachingMessageKo.includes('북패(키타) 2개'))
     assert.ok(result.coachingMessageKo.includes('고타점(만관 이상)이 확정'))
@@ -265,19 +265,19 @@ nodeTest('ScoreSituationEvaluator - evaluateDealInSituation flags HIGH_VALUE_RIS
 nodeTest('ScoreSituationEvaluator - calculateOverallSituationScore handles penalties and defaults', () => {
     const evaluator = new ScoreSituationEvaluator()
 
-    assert.equal(evaluator.calculateOverallSituationScore([]), 80)
+    assert.strictEqual(evaluator.calculateOverallSituationScore([]), 80)
 
     const goodSummaries = [
         { roundIndex: 0, isOrasu: false, is3P: true, startRank: 1, finalRank: 1, droppedFrom2ndTo3rd: false, situationScore: 90 },
         { roundIndex: 1, isOrasu: true, is3P: true, startRank: 2, finalRank: 2, droppedFrom2ndTo3rd: false, situationScore: 95 }
     ]
-    assert.equal(evaluator.calculateOverallSituationScore(goodSummaries), 93)
+    assert.strictEqual(evaluator.calculateOverallSituationScore(goodSummaries), 93)
 
     const disasterSummaries = [
         { roundIndex: 0, isOrasu: false, is3P: true, startRank: 1, finalRank: 1, droppedFrom2ndTo3rd: false, situationScore: 85 },
         { roundIndex: 1, isOrasu: true, is3P: true, startRank: 2, finalRank: 3, droppedFrom2ndTo3rd: true, situationScore: 35 }
     ]
-    assert.equal(evaluator.calculateOverallSituationScore(disasterSummaries), 60)
+    assert.strictEqual(evaluator.calculateOverallSituationScore(disasterSummaries), 60)
 })
 
 /*_ GEMINI THINKING _*/
@@ -347,8 +347,8 @@ nodeTest('CoachingAdvisor - analyzeRound detects ORASU_FATAL_DEAL_IN in full rou
 
     const fatalMistake = mistakes.find((m) => m.mistakeCategory === 'ORASU_FATAL_DEAL_IN' || m.mistakeCategory === 'ORASU_SECOND_DEFENSE_FAILURE')
     assert.ok(fatalMistake !== undefined)
-    assert.equal(fatalMistake?.severityScore, 100)
-    assert.equal(fatalMistake?.optimalTile, '1z')
+    assert.strictEqual(fatalMistake?.severityScore, 100)
+    assert.strictEqual(fatalMistake?.optimalTile, '1z')
     assert.ok(fatalMistake?.coachingMessageKo.includes('오라스'))
     assert.ok(fatalMistake?.coachingMessageKo.includes('3위(라스)로 추락했습니다'))
 })
@@ -421,11 +421,11 @@ nodeTest('CoachingAdvisor - analyzeGame produces situationScore and orasuEvaluat
     }
 
     const report = advisor.analyzeGame(gameRecord, 1, true)
-    assert.equal(report.is3P, true)
+    assert.strictEqual(report.is3P, true)
     assert.ok(report.situationScore !== undefined)
     assert.ok(report.situationScore >= 80)
     assert.ok(report.orasuEvaluation !== undefined)
-    assert.equal(report.orasuEvaluation?.isOrasuEvaluated, true)
-    assert.equal(report.orasuEvaluation?.droppedFrom2ndTo3rd, false)
+    assert.strictEqual(report.orasuEvaluation?.isOrasuEvaluated, true)
+    assert.strictEqual(report.orasuEvaluation?.droppedFrom2ndTo3rd, false)
     assert.ok(report.orasuEvaluation?.summaryKo.includes('오라스 2위 상황에서 안정적인 방어로 순위 유지'))
 })

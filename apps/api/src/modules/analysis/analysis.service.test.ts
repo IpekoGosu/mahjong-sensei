@@ -396,7 +396,7 @@ test('AnalysisService - getCoachingReport handles 3P Orasu 2nd defense failure i
             },
             {
                 id: 'round-last',
-                roundIndex: 2,
+                roundIndex: 5, // South 3 (Orasu in 3P Hanchan)
                 roundMetrics: [
                     {
                         seat: 1,

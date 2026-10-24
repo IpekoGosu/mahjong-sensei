@@ -585,12 +585,9 @@ export class AnalysisService {
         const lastRound = game.rounds[game.rounds.length - 1]
         const lastRoundIndex = lastRound?.roundIndex ?? 0
         const isSouthRoom = game.roomType.includes('남') || game.roomType.includes('South')
-        const chang = isSouthRoom ? 1 : 0
+        const chang = isSouthRoom ? (lastRoundIndex >= (is3P ? 3 : 4) ? 1 : 0) : 0
         const ju = lastRoundIndex % (is3P ? 3 : 4)
-        const isOrasuGame = (game.rounds.length > 0) && (
-            this.situationEvaluator.isOrasu(chang, ju, is3P, !isSouthRoom) ||
-            lastRoundIndex >= (is3P ? 2 : 3)
-        )
+        const isOrasuGame = (game.rounds.length > 0) && this.situationEvaluator.isOrasu(chang, ju, is3P, !isSouthRoom)
 
         const orasuEvaluation = (game.rounds.length > 0 && isOrasuGame) ? {
             isOrasuEvaluated: true,
