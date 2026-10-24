@@ -483,7 +483,7 @@ export class LuckEvaluator {
         return payers >= 2
     }
 
-    protected normalizeTile(tile: string): string {
-        return tile.replace('0m', '5m').replace('0p', '5p').replace('0s', '5s')
+    private normalizeTile(tile: string): string {
+        return TileConverter.normalizeTile(tile)
     }
 }

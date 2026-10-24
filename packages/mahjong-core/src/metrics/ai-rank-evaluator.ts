@@ -6,7 +6,7 @@ import {
 } from '@mahjong-sensei/types'
 import { MajsoulGameRecord } from '../parser/types'
 import { ShantenCalculator } from '../shanten'
-import { TILE_NAMES } from '../tiles'
+import { TileConverter, TILE_NAMES } from '../tiles'
 
 export type PaipuGame = MajsoulGameRecord
 
@@ -151,6 +151,7 @@ export class AiRankEvaluator {
                             currentHand.splice(bIdx, 1)
                         }
                     }
+                    this.addVisibleTile('4z', visibleTileCounts)
                 } else if (action.type === 'RecordChiPengGang') {
                     if (action.seat === targetSeat) {
                         playerMeldCount++
@@ -163,12 +164,14 @@ export class AiRankEvaluator {
                         kanCount++
                     }
 
+                    const isTargetDiscard = action.fromSeat === targetSeat
                     let skippedCalled = false
                     const handTilesToRemove: string[] = []
 
                     for (const tile of action.tiles) {
                         if (
                             !skippedCalled &&
+                            !isTargetDiscard &&
                             lastDiscardedTile !== null &&
                             this.normalizeTile(tile) === this.normalizeTile(lastDiscardedTile)
                         ) {
@@ -192,7 +195,10 @@ export class AiRankEvaluator {
                             if (skipIdx === -1) {
                                 skipIdx = 0
                             }
-                            handTilesToRemove.splice(skipIdx, 1)
+                            const calledTile = handTilesToRemove.splice(skipIdx, 1)[0]
+                            if (calledTile) {
+                                this.addVisibleTile(calledTile, visibleTileCounts)
+                            }
                         }
 
                         for (const tile of handTilesToRemove) {
@@ -844,16 +850,7 @@ export class AiRankEvaluator {
     }
 
     protected normalizeTile(tile: string): string {
-        if (tile === '0m') {
-            return '5m'
-        }
-        if (tile === '0p') {
-            return '5p'
-        }
-        if (tile === '0s') {
-            return '5s'
-        }
-        return tile
+        return TileConverter.normalizeTile(tile)
     }
 
     /*_ GEMINI THINKING _*/

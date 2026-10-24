@@ -596,3 +596,70 @@ test('AiRankEvaluator - evaluatePaipuGame: RecordAnGangAddGang handles ankan (4 
     assert.ok(breakdown.aiScore >= 0 && breakdown.aiScore <= 100)
     assert.ok(['S+', 'S', 'A', 'B', 'C', 'D'].includes(breakdown.grade))
 })
+
+/*_ GEMINI THINKING _*/
+test('AiRankEvaluator - evaluatePaipuGame: RecordBaBei removes 4z and opponent calling target discard updates visibleTileCounts', () => {
+    const evaluator = new AiRankEvaluator()
+
+    const game: PaipuGame = {
+        uuid: 'test-babei-and-target-discard-furo',
+        roomType: '옥탁 동풍전 (Jade East)',
+        timestamp: 1722510000000,
+        players: [
+            { accountId: 10001, nickname: 'TargetPlayer', seat: 0, level: 3 },
+            { accountId: 10002, nickname: 'Opponent1', seat: 1, level: 3 },
+            { accountId: 10003, nickname: 'Opponent2', seat: 2, level: 3 },
+            { accountId: 10004, nickname: 'Opponent3', seat: 3, level: 3 }
+        ],
+        rounds: [
+            {
+                header: {
+                    type: 'RecordNewRound',
+                    chang: 0,
+                    ju: 0,
+                    ben: 0,
+                    liqi: 0,
+                    scores: [25000, 25000, 25000, 25000],
+                    dora: '5p',
+                    hands: [
+                        // Seat 0 starting hand contains '4z' (Pei) and '1z'
+                        ['1m', '2m', '3m', '4p', '5p', '6p', '7s', '8s', '9s', '1z', '2z', '3z', '4z'],
+                        ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+                        ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+                        ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s']
+                    ]
+                },
+                actions: [
+                    // Seat 0 declares RecordBaBei: 4z removed from hand, 4z added to visible counts
+                    { type: 'RecordBaBei', seat: 0, isMoqie: false, doras: ['4z'] },
+
+                    // Rinshan draw: draws 1s
+                    { type: 'RecordDealTile', seat: 0, tile: '1s' },
+
+                    // Seat 0 discards 1z
+                    { type: 'RecordDiscardTile', seat: 0, tile: '1z', isMoqie: false, isLiqi: false },
+
+                    // Opponent Seat 1 calls Pon on Seat 0's 1z discard (isTargetDiscard = true)
+                    // The 1z discard and opponent's 1z tiles must both be added to visibleTileCounts without permanent loss
+                    { type: 'RecordChiPengGang', seat: 1, meldType: 'pon', tiles: ['1z', '1z', '1z'], fromSeat: 0 },
+                    { type: 'RecordDiscardTile', seat: 1, tile: '4p', isMoqie: false, isLiqi: false },
+
+                    // Seat 2 discards 2z
+                    { type: 'RecordDealTile', seat: 2, tile: '2z' },
+                    { type: 'RecordDiscardTile', seat: 2, tile: '2z', isMoqie: false, isLiqi: false },
+
+                    // Target Seat 0 draws and discards
+                    { type: 'RecordDealTile', seat: 0, tile: '2s' },
+                    { type: 'RecordDiscardTile', seat: 0, tile: '2s', isMoqie: true, isLiqi: false },
+
+                    { type: 'RecordNoTile', tenpaiSeats: [0], deltaScores: [3000, -1000, -1000, -1000] }
+                ]
+            }
+        ]
+    }
+
+    const breakdown = evaluator.evaluatePaipuGame(game, 0)
+    assert.ok(breakdown.matchRate >= 0 && breakdown.matchRate <= 100)
+    assert.ok(breakdown.aiScore >= 0 && breakdown.aiScore <= 100)
+    assert.ok(['S+', 'S', 'A', 'B', 'C', 'D'].includes(breakdown.grade))
+})
