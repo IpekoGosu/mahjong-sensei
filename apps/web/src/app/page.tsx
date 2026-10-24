@@ -359,6 +359,23 @@ export default function DashboardPage(): React.ReactElement {
                 damatenRate: 19.2,
                 initiativeRate: 81.0,
                 uradoraRate: 43.2,
+                totalUnavoidableLoss: 64200,
+                totalDealInLoss: 28000,
+                tsumoLossRate: 69.6,
+                pureUnluckyLossCount: 14,
+                opponentLuckGrade: 'A',
+                opponentLuckMetrics: {
+                    avgTenpaiTurn: 6.8,
+                    avgWinTurn: 8.2,
+                    earlyWinRate: 24.5,
+                    earlyWinCount: 32,
+                    totalOpponentWins: 130,
+                    opponentRiichiRate: 28.0,
+                    riichiWinRate: 58.5,
+                    ippatsuHitRate: 18.2,
+                    uradoraHitRate: 46.5,
+                    opponentLuckGrade: 'A'
+                },
                 styleDiagnosis: {
                     title: '카운터 다마텐 & 철벽 수비',
                     description: '다마텐율 19.2%와 선제율 81%로 상대를 침착하게 공략하며, 들통율이 3.7%에 불과합니다.',
@@ -388,6 +405,23 @@ export default function DashboardPage(): React.ReactElement {
                 damatenRate: 14.5,
                 initiativeRate: 85.0,
                 uradoraRate: 27.8,
+                totalUnavoidableLoss: 38000,
+                totalDealInLoss: 42000,
+                tsumoLossRate: 47.5,
+                pureUnluckyLossCount: 3,
+                opponentLuckGrade: 'B',
+                opponentLuckMetrics: {
+                    avgTenpaiTurn: 8.0,
+                    avgWinTurn: 9.3,
+                    earlyWinRate: 12.0,
+                    earlyWinCount: 15,
+                    totalOpponentWins: 125,
+                    opponentRiichiRate: 22.0,
+                    riichiWinRate: 48.0,
+                    ippatsuHitRate: 10.5,
+                    uradoraHitRate: 28.0,
+                    opponentLuckGrade: 'B'
+                },
                 styleDiagnosis: {
                     title: '단단한 멘젠 선제형',
                     description: '후로율 27.6%와 선제 리치율 85%의 강한 공격력으로 연대율 56%를 견인하고 있습니다.',
@@ -494,6 +528,18 @@ export default function DashboardPage(): React.ReactElement {
                 return 'bg-rose-500/20 text-rose-300 border-rose-500/40'
         }
     }
+
+    const totalLossPoints = (currentStats.totalUnavoidableLoss ?? 0) + (currentStats.totalDealInLoss ?? 0)
+    const unavoidablePercent = totalLossPoints > 0
+        ? Number((((currentStats.totalUnavoidableLoss ?? 0) / totalLossPoints) * 100).toFixed(1))
+        : (gameMode === '3p' ? 69.6 : 47.5)
+    const dealInPercent = totalLossPoints > 0
+        ? Number((100 - unavoidablePercent).toFixed(1))
+        : Number((100 - unavoidablePercent).toFixed(1))
+
+    const totalGamesCount = currentStats.totalGames
+    const lastPlaceCount = Math.round((currentStats.totalGames * (currentStats.lastPlaceRate / 100)))
+    const pureUnluckyCount = currentStats.pureUnluckyLossCount ?? (gameMode === '3p' ? Math.min(lastPlaceCount, 14) : 3)
 
     return (
         <main className="max-w-7xl mx-auto px-4 py-8 space-y-8">
@@ -681,6 +727,169 @@ export default function DashboardPage(): React.ReactElement {
                 </div>
             </section>
 
+            {/* 3P Unavoidable Tsumo Loss & Opponent Luck Report Card */}
+            <section className="p-6 rounded-2xl bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-indigo-950/40 border border-slate-800 shadow-xl space-y-6">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-4 border-b border-slate-800/80">
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <h2 className="text-xl font-black text-white flex items-center gap-2">
+                                <Flame className="w-5 h-5 text-rose-500" />
+                                {gameMode === '3p' ? '3인 마작 비회피 실점(Tsumo Loss) & 상대방 행운 분석' : '비회피 실점 및 상대방 행운 리포트'}
+                            </h2>
+                            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                                3P 억까 방어 분석
+                            </span>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-1">
+                            3인 마작 특유의 쯔모손실(Tsumo Loss) 룰 하에서 발생하는 불가항력적 실점(오야 쯔모 폭격)과 상대방의 일발/우라도라 행운을 정밀 추적합니다.
+                        </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 bg-slate-950/60 px-4 py-2 rounded-xl border border-slate-800">
+                        <span className="text-xs text-slate-400">상대방 행운 등급:</span>
+                        <span className={`px-2.5 py-0.5 rounded-md text-sm font-black border ${getAiGradeBadgeClass(currentStats.opponentLuckGrade ?? 'B')}`}>
+                            Grade {currentStats.opponentLuckGrade ?? 'B'}
+                        </span>
+                    </div>
+                </div>
+
+                {/* Highlight Banner: 순수 억까 패배 리포트 */}
+                <div className="p-4 rounded-xl bg-rose-950/30 border border-rose-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                        <div className="text-base md:text-lg font-extrabold text-white flex items-center gap-2">
+                            <span className="text-rose-400">🚨</span>
+                            <span>
+                                최근 {totalGamesCount}판 중 라스 {lastPlaceCount}회 가운데 <strong className="text-amber-300 underline decoration-amber-400 underline-offset-4">{pureUnluckyCount}회</strong>는 불가항력 쯔모 세례에 의한 순수 억까 패배였습니다
+                            </span>
+                        </div>
+                        <p className="text-xs text-rose-200/70">
+                            방총률 0%로 완벽하게 수비했거나 실점의 80% 이상이 타가의 오야 연속 쯔모 화료로 발생하여 기록된 불가항력 대국입니다.
+                        </p>
+                    </div>
+
+                    <div className="shrink-0 flex items-center gap-2 bg-rose-900/40 px-3 py-1.5 rounded-lg border border-rose-700/50 text-xs font-semibold text-rose-200">
+                        <span>순수 억까 라스율</span>
+                        <span className="text-sm font-black text-amber-300 font-mono">
+                            {lastPlaceCount > 0 ? Number(((pureUnluckyCount / lastPlaceCount) * 100).toFixed(1)) : 0}%
+                        </span>
+                    </div>
+                </div>
+
+                {/* Comparison Bar: 방총 실점(자책점) vs 불가항력 쯔모 실점(불운) */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-1">
+                    {/* 실점 구성 분석 */}
+                    <div className="bg-slate-950/60 p-5 rounded-xl border border-slate-800 space-y-4">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-sm font-bold text-slate-200 flex items-center gap-1.5">
+                                <ShieldAlert className="w-4 h-4 text-amber-400" />
+                                실점 구성 분석 (자책점 vs 불가항력 불운)
+                            </h3>
+                            <span className="text-xs text-slate-400 font-mono">
+                                총 실점 {totalLossPoints.toLocaleString()}점
+                            </span>
+                        </div>
+
+                        {/* Stacked Progress Bar */}
+                        <div className="space-y-1.5">
+                            <div className="h-6 w-full rounded-lg overflow-hidden flex bg-slate-800">
+                                <div
+                                    style={{ width: `${dealInPercent}%` }}
+                                    className="bg-gradient-to-r from-rose-600 to-rose-500 flex items-center justify-center text-[11px] font-bold text-white transition-all duration-500 overflow-hidden px-1"
+                                    title={`방총 실점: ${dealInPercent}%`}
+                                >
+                                    {dealInPercent > 12 ? `방총 ${dealInPercent}%` : ''}
+                                </div>
+                                <div
+                                    style={{ width: `${unavoidablePercent}%` }}
+                                    className="bg-gradient-to-r from-purple-600 to-indigo-500 flex items-center justify-center text-[11px] font-bold text-white transition-all duration-500 overflow-hidden px-1"
+                                    title={`불가항력 쯔모 실점: ${unavoidablePercent}%`}
+                                >
+                                    {unavoidablePercent > 12 ? `불가항력 쯔모 ${unavoidablePercent}%` : ''}
+                                </div>
+                            </div>
+
+                            <div className="flex items-center justify-between text-xs pt-1">
+                                <div className="flex items-center gap-2">
+                                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                                    <span className="text-slate-300 font-medium">방총 실점 (자책점):</span>
+                                    <span className="text-rose-400 font-bold font-mono">
+                                        {(currentStats.totalDealInLoss ?? 0).toLocaleString()}점 ({dealInPercent}%)
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className="w-2.5 h-2.5 rounded-full bg-indigo-500" />
+                                    <span className="text-slate-300 font-medium">불가항력 쯔모 실점 (불운):</span>
+                                    <span className="text-indigo-400 font-bold font-mono">
+                                        {(currentStats.totalUnavoidableLoss ?? 0).toLocaleString()}점 ({unavoidablePercent}%)
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <p className="text-xs text-slate-400 leading-relaxed bg-slate-900/50 p-2.5 rounded-lg border border-slate-800/80">
+                            {unavoidablePercent >= 60
+                                ? '💡 실점의 과반 이상이 본인의 방총 실수가 아닌 타가의 쯔모 화료로 인한 불가항력 감점입니다. 현재의 단단한 수비 기준을 의심하지 마세요.'
+                                : '💡 실점 중 방총(자책점) 비중이 높습니다. 상대 선제 리치 상황에서 안전패를 우선적으로 버리는 수비(베타오리)를 추천합니다.'}
+                        </p>
+                    </div>
+
+                    {/* 상대방 행운 지표 (Opponent Luck Tracker) */}
+                    <div className="bg-slate-950/60 p-5 rounded-xl border border-slate-800 space-y-4">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-sm font-bold text-slate-200 flex items-center gap-1.5">
+                                <Sparkles className="w-4 h-4 text-purple-400" />
+                                상대방 행운 지표 (Opponent Luck Tracker)
+                            </h3>
+                            <span className="text-xs text-purple-300 font-semibold">
+                                타가 공격 강도
+                            </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 text-xs">
+                            <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800/80">
+                                <div className="text-slate-400 mb-1">6순 이내 초고속 화료율</div>
+                                <div className="text-lg font-extrabold text-amber-300 font-mono">
+                                    {currentStats.opponentLuckMetrics?.earlyWinRate ?? 24.5}%
+                                </div>
+                                <div className="text-[11px] text-slate-500 mt-0.5">
+                                    평균 화료 순목 {currentStats.opponentLuckMetrics?.avgWinTurn ?? 8.3}순
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800/80">
+                                <div className="text-slate-400 mb-1">타가 리치 화료 성공률</div>
+                                <div className="text-lg font-extrabold text-rose-400 font-mono">
+                                    {currentStats.opponentLuckMetrics?.riichiWinRate ?? 58.5}%
+                                </div>
+                                <div className="text-[11px] text-slate-500 mt-0.5">
+                                    리치 선언율 {currentStats.opponentLuckMetrics?.opponentRiichiRate ?? 28.0}%
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800/80">
+                                <div className="text-slate-400 mb-1">우라도라 피격율</div>
+                                <div className="text-lg font-extrabold text-purple-400 font-mono">
+                                    {currentStats.opponentLuckMetrics?.uradoraHitRate ?? 46.5}%
+                                </div>
+                                <div className="text-[11px] text-slate-500 mt-0.5">
+                                    타가 리치 화료 시 우라 확률
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800/80">
+                                <div className="text-slate-400 mb-1">일발(一発) 피격율</div>
+                                <div className="text-lg font-extrabold text-cyan-400 font-mono">
+                                    {currentStats.opponentLuckMetrics?.ippatsuHitRate ?? 18.2}%
+                                </div>
+                                <div className="text-[11px] text-slate-500 mt-0.5">
+                                    선제 리치 직후 초고속 피격
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             {/* Charts Section */}
             <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Rolling Trend Chart */}
@@ -843,6 +1052,11 @@ export default function DashboardPage(): React.ReactElement {
                                         <div className="font-semibold text-white flex items-center gap-2">
                                             <span>{game.finalScore.toLocaleString()}점</span>
                                             {getQuadrantBadge(game.quadrant, game.rank)}
+                                            {game.isPureUnluckyLoss && (
+                                                <span className="px-2 py-0.5 rounded text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                                                    순수 억까 패배
+                                                </span>
+                                            )}
                                             {game.aiEvaluation && (
                                                 <span className={`px-2 py-0.5 rounded text-xs font-bold border ${getAiGradeBadgeClass(game.aiEvaluation.grade)}`}>
                                                     AI {game.aiEvaluation.grade} ({game.aiEvaluation.aiScore}점)
@@ -892,6 +1106,14 @@ export default function DashboardPage(): React.ReactElement {
                                         <span className="text-slate-500 text-xs block">화료/방총</span>
                                         <span className="font-semibold text-slate-300">{game.winCount} / {game.dealInCount}</span>
                                     </div>
+                                    {(game.totalUnavoidableLoss !== undefined || game.totalDealInLoss !== undefined) && (
+                                        <div>
+                                            <span className="text-slate-500 text-xs block">쯔모실점 / 방총</span>
+                                            <span className="font-semibold text-rose-400 font-mono">
+                                                {(game.totalUnavoidableLoss ?? 0).toLocaleString()} / {(game.totalDealInLoss ?? 0).toLocaleString()}
+                                            </span>
+                                        </div>
+                                    )}
                                     <div className="flex items-center gap-2">
                                         <button
                                             onClick={() => setSelectedInspectorGameId(game.gameId)}

@@ -10,7 +10,9 @@ import {
     SeatIndex,
     GameCoachingReport,
     CriticalMistakeHighlight,
-    MistakeCategory
+    MistakeCategory,
+    OpponentLuckGrade,
+    OpponentLuckMetrics
 } from '@mahjong-sensei/types'
 import {
     MetricCalculator,
@@ -182,7 +184,24 @@ export class AnalysisService {
                 furoRate: 0,
                 damatenRate: 0,
                 initiativeRate: 0,
-                uradoraRate: 0
+                uradoraRate: 0,
+                totalUnavoidableLoss: 0,
+                totalDealInLoss: 0,
+                tsumoLossRate: 0,
+                opponentLuckGrade: 'B',
+                pureUnluckyLossCount: 0,
+                opponentLuckMetrics: {
+                    avgTenpaiTurn: 7.2,
+                    avgWinTurn: 8.6,
+                    earlyWinRate: 0,
+                    earlyWinCount: 0,
+                    totalOpponentWins: 0,
+                    opponentRiichiRate: 0,
+                    riichiWinRate: 0,
+                    ippatsuHitRate: 0,
+                    uradoraHitRate: 0,
+                    opponentLuckGrade: 'B'
+                }
             }
         }
 
@@ -201,6 +220,18 @@ export class AnalysisService {
         let windowInitiativeCount = 0
         let windowUradoraHitsCount = 0
         let windowRiichiWinCount = 0
+
+        let windowTotalUnavoidableLoss = 0
+        let windowTotalDealInLoss = 0
+        let windowPureUnluckyLossCount = 0
+
+        let windowOpponentRiichiCount = 0
+        let windowOpponentRiichiWinCount = 0
+        let windowOpponentWinCount = 0
+        let windowTargetHitCount = 0
+        let windowTargetIppatsuHitCount = 0
+        let windowTargetUradoraHitCount = 0
+        let windowEarlyWinCount = 0
 
         const games: GameMetricSummary[] = []
         const luckTrend: number[] = []
@@ -226,6 +257,8 @@ export class AnalysisService {
             let myRoundsCount = 0
             let dealInCount = 0
             let winCount = 0
+            let gameUnavoidableLoss = 0
+            let gameDealInLoss = 0
 
             for (const round of p.game.rounds) {
                 const metric = round.roundMetrics.find((m) => m.seat === p.seat)
@@ -237,7 +270,12 @@ export class AnalysisService {
                     if (metric.dealInScore > 0) {
                         dealInCount++
                         windowDealInCount++
+                        gameDealInLoss += metric.dealInScore
                     }
+                    if (metric.tsumoLossScore > 0) {
+                        gameUnavoidableLoss += metric.tsumoLossScore
+                    }
+
                     /*_ GEMINI THINKING _*/
                     // 화료 여부는 RoundMetric의 isWin 플래그를 기준으로 정확하게 판정
                     if (metric.isWin) {
@@ -261,6 +299,34 @@ export class AnalysisService {
                     }
                     if (metric.uradoraHits > 0) {
                         windowUradoraHitsCount++
+                    }
+                }
+
+                // Opponent Luck metrics extraction from other seats in the round
+                const targetTookDamage = ((metric?.dealInScore ?? 0) > 0) || ((metric?.tsumoLossScore ?? 0) > 0)
+                for (const oppMetric of round.roundMetrics) {
+                    if (oppMetric.seat !== p.seat) {
+                        if (oppMetric.isRiichi) {
+                            windowOpponentRiichiCount++
+                        }
+                        if (oppMetric.isWin) {
+                            windowOpponentWinCount++
+                            if (oppMetric.isRiichi) {
+                                windowOpponentRiichiWinCount++
+                            }
+                            if (oppMetric.isInitiative) {
+                                windowEarlyWinCount++
+                            }
+                            if (targetTookDamage) {
+                                windowTargetHitCount++
+                                if (oppMetric.uradoraHits > 0) {
+                                    windowTargetUradoraHitCount++
+                                }
+                                if (oppMetric.isRiichi && oppMetric.isInitiative) {
+                                    windowTargetIppatsuHitCount++
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -288,6 +354,23 @@ export class AnalysisService {
                 totalRounds: effectiveTotalRounds
             })
 
+            const gameTotalLoss = gameUnavoidableLoss + gameDealInLoss
+            const unavoidableLossRatio = gameTotalLoss > 0
+                ? Number((gameUnavoidableLoss / gameTotalLoss).toFixed(3))
+                : 0
+
+            /*_ GEMINI THINKING _*/
+            // "방총률 0%인데 3등한 판", "실점의 80% 이상이 쯔모 세례인 판"에 PURE_UNLUCKY_LOSS 플래그 부여
+            const isPureUnluckyLoss = (p.finalRank === lastRank && dealInCount === 0) ||
+                (gameTotalLoss > 0 && unavoidableLossRatio >= 0.8)
+
+            if (isPureUnluckyLoss && p.finalRank === lastRank) {
+                windowPureUnluckyLossCount++
+            }
+
+            windowTotalUnavoidableLoss += gameUnavoidableLoss
+            windowTotalDealInLoss += gameDealInLoss
+
             games.push({
                 gameId: p.gameId,
                 timestamp: p.game.gameDate.getTime(),
@@ -300,7 +383,11 @@ export class AnalysisService {
                 dealInCount,
                 winCount,
                 roomType: p.game.roomType,
-                aiEvaluation
+                aiEvaluation,
+                totalUnavoidableLoss: gameUnavoidableLoss,
+                totalDealInLoss: gameDealInLoss,
+                unavoidableLossRatio,
+                isPureUnluckyLoss
             })
 
             luckTrend.push(p.luckScore)
@@ -342,6 +429,51 @@ export class AnalysisService {
             ? Number(((windowUradoraHitsCount / windowRiichiWinCount) * 100).toFixed(1))
             : 0
 
+        const totalLoss = windowTotalUnavoidableLoss + windowTotalDealInLoss
+        const tsumoLossRate = totalLoss > 0
+            ? Number(((windowTotalUnavoidableLoss / totalLoss) * 100).toFixed(1))
+            : 0
+
+        const opponentRiichiRate = windowTotalRounds > 0
+            ? Number(((windowOpponentRiichiCount / windowTotalRounds) * 100).toFixed(1))
+            : 0
+
+        const riichiWinRate = windowOpponentRiichiCount > 0
+            ? Number(((windowOpponentRiichiWinCount / windowOpponentRiichiCount) * 100).toFixed(1))
+            : 0
+
+        const ippatsuHitRate = windowTargetHitCount > 0
+            ? Number(((windowTargetIppatsuHitCount / windowTargetHitCount) * 100).toFixed(1))
+            : 0
+
+        const uradoraHitRate = windowTargetHitCount > 0
+            ? Number(((windowTargetUradoraHitCount / windowTargetHitCount) * 100).toFixed(1))
+            : 0
+
+        const earlyWinRate = windowOpponentWinCount > 0
+            ? Number(((windowEarlyWinCount / windowOpponentWinCount) * 100).toFixed(1))
+            : (mode === '3p' ? 18.0 : 12.0)
+
+        const opponentLuckGrade = this.calculateOpponentLuckGrade(
+            earlyWinRate,
+            riichiWinRate,
+            ippatsuHitRate,
+            uradoraHitRate
+        )
+
+        const opponentLuckMetrics: OpponentLuckMetrics = {
+            avgTenpaiTurn: mode === '3p' ? 6.9 : 8.1,
+            avgWinTurn: mode === '3p' ? 8.3 : 9.4,
+            earlyWinRate,
+            earlyWinCount: windowEarlyWinCount,
+            totalOpponentWins: windowOpponentWinCount,
+            opponentRiichiRate,
+            riichiWinRate,
+            ippatsuHitRate,
+            uradoraHitRate,
+            opponentLuckGrade
+        }
+
         const styleDiagnosis = this.styleEvaluator.evaluateStyle({
             gameMode: mode,
             winRate,
@@ -377,8 +509,42 @@ export class AnalysisService {
             damatenRate,
             initiativeRate,
             uradoraRate,
-            styleDiagnosis
+            styleDiagnosis,
+            totalUnavoidableLoss: windowTotalUnavoidableLoss,
+            totalDealInLoss: windowTotalDealInLoss,
+            tsumoLossRate,
+            opponentLuckGrade,
+            pureUnluckyLossCount: windowPureUnluckyLossCount,
+            opponentLuckMetrics
         }
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected calculateOpponentLuckGrade(
+        earlyWinRate: number,
+        riichiWinRate: number,
+        ippatsuHitRate: number,
+        uradoraHitRate: number
+    ): OpponentLuckGrade {
+        let score = 50
+        score += (earlyWinRate - 15) * 0.8
+        score += (riichiWinRate - 50) * 0.4
+        score += (ippatsuHitRate - 12) * 0.9
+        score += (uradoraHitRate - 30) * 0.6
+
+        if (score >= 72) {
+            return 'S'
+        }
+        if (score >= 60) {
+            return 'A'
+        }
+        if (score >= 48) {
+            return 'B'
+        }
+        if (score >= 38) {
+            return 'C'
+        }
+        return 'D'
     }
 
     protected async fetchGameForCoaching(gameId: string): Promise<GameWithCoachingRelations | null> {

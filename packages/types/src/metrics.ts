@@ -20,6 +20,39 @@ export interface RoundLuckMetric {
     readonly unavoidableDamage: number
     readonly luckScore: number
     readonly isWin?: boolean
+    readonly totalUnavoidableLoss?: number
+    readonly unavoidableLossRatio?: number
+    readonly dealInDamage?: number
+    readonly dealerManganTsumoCount?: number
+    readonly dealerHanemanTsumoCount?: number
+    readonly isDealerTsumo?: boolean
+}
+
+export type OpponentLuckGrade = 'S' | 'A' | 'B' | 'C' | 'D'
+
+export interface OpponentLuckMetrics {
+    readonly avgTenpaiTurn: number
+    readonly avgWinTurn: number
+    readonly earlyWinRate: number
+    readonly earlyWinCount: number
+    readonly totalOpponentWins: number
+    readonly opponentRiichiRate: number
+    readonly riichiWinRate: number
+    readonly ippatsuHitRate: number
+    readonly uradoraHitRate: number
+    readonly opponentLuckGrade: OpponentLuckGrade
+}
+
+export interface UnavoidableLossSummary {
+    readonly totalUnavoidableLoss: number
+    readonly totalDealInLoss: number
+    readonly totalLoss: number
+    readonly unavoidableLossRatio: number
+    readonly dealerManganTsumoCount: number
+    readonly dealerHanemanTsumoCount: number
+    readonly consecutiveDealerTsumoCount: number
+    readonly maxConsecutiveDealerTsumos: number
+    readonly isPureUnluckyLoss: boolean
 }
 
 export interface RoundSkillMetric {
@@ -56,6 +89,11 @@ export interface GameMetricSummary {
     readonly winCount: number
     readonly roomType?: string
     readonly aiEvaluation?: AiEvaluationBreakdown
+    readonly totalUnavoidableLoss?: number
+    readonly totalDealInLoss?: number
+    readonly unavoidableLossRatio?: number
+    readonly isPureUnluckyLoss?: boolean
+    readonly opponentLuckMetrics?: OpponentLuckMetrics
 }
 
 export interface StyleDiagnosis {
@@ -104,6 +142,12 @@ export interface RollingWindowStats {
     readonly initiativeRate?: number
     readonly uradoraRate?: number
     readonly styleDiagnosis?: StyleDiagnosis
+    readonly totalUnavoidableLoss?: number
+    readonly totalDealInLoss?: number
+    readonly tsumoLossRate?: number
+    readonly opponentLuckGrade?: OpponentLuckGrade
+    readonly pureUnluckyLossCount?: number
+    readonly opponentLuckMetrics?: OpponentLuckMetrics
 }
 
 export type TierKey = 'NOVICE_ADEPT' | 'EXPERT' | 'MASTER' | 'SAINT'
