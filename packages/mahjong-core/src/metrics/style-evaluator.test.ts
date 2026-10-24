@@ -1,10 +1,40 @@
 /*_ GEMINI THINKING _*/
 import test from 'node:test'
 import assert from 'node:assert'
-import { StyleEvaluationInput } from '@mahjong-sensei/types'
+import {
+    StyleEvaluationInput,
+    TiltEvaluationInput,
+    TiltMetricsComparison,
+    TiltSymptom,
+    TiltSeverity
+} from '@mahjong-sensei/types'
 import { StyleEvaluator } from './style-evaluator'
 
 class MockStyleEvaluator extends StyleEvaluator {
+    public testEvaluateDoraNeglectSymptom(baseline: TiltMetricsComparison, recent: TiltMetricsComparison): TiltSymptom {
+        return this.evaluateDoraNeglectSymptom(baseline, recent)
+    }
+
+    public testEvaluateBadWaitRiichiSymptom(baseline: TiltMetricsComparison, recent: TiltMetricsComparison): TiltSymptom {
+        return this.evaluateBadWaitRiichiSymptom(baseline, recent)
+    }
+
+    public testEvaluateHalfHeartedMawashiuchiSymptom(baseline: TiltMetricsComparison, recent: TiltMetricsComparison): TiltSymptom {
+        return this.evaluateHalfHeartedMawashiuchiSymptom(baseline, recent)
+    }
+
+    public testDetermineTiltTitle(severity: TiltSeverity): string {
+        return this.determineTiltTitle(severity)
+    }
+
+    public testBuildTiltSummary(severity: TiltSeverity, symptoms: readonly TiltSymptom[]): string {
+        return this.buildTiltSummary(severity, symptoms)
+    }
+
+    public testBuildTiltAdvice(severity: TiltSeverity, symptoms: readonly TiltSymptom[]): string {
+        return this.buildTiltAdvice(severity, symptoms)
+    }
+
     public testDetermineAttackType(input: StyleEvaluationInput, is3P: boolean): string {
         return this.determineAttackType(input, is3P)
     }
@@ -144,4 +174,116 @@ test('StyleEvaluator - Protected methods testing via MockStyleEvaluator', () => 
 
     const skillRemarkAggressive = mock.testDetermineSkillRemark(16.5, false)
     assert.strictEqual(skillRemarkAggressive, '방총 제어 주의')
+})
+
+test('StyleEvaluator - diagnoseTilt: Critical tilt detected when all 3 symptoms trigger in slump', () => {
+    const evaluator = new StyleEvaluator()
+
+    const input: TiltEvaluationInput = {
+        baseline: {
+            avgWinScore: 8200,
+            badWaitRiichiRate: 20.0,
+            halfHeartedDealInRate: 8.0,
+            doraDischargeRate: 12.0
+        },
+        recent: {
+            avgWinScore: 5400, // Drop > 34% (Symptom 1: Dora Neglect / Low Han)
+            badWaitRiichiRate: 42.0, // Increase +22%p (Symptom 2: Bad Wait Riichi)
+            halfHeartedDealInRate: 18.5, // Increase +10.5%p (Symptom 3: Half-hearted Mawashiuchi)
+            doraDischargeRate: 32.0
+        },
+        slumpGameCount: 100,
+        gameMode: '3p'
+    }
+
+    const diagnosis = evaluator.diagnoseTilt(input)
+
+    assert.strictEqual(diagnosis.isTilt, true)
+    assert.strictEqual(diagnosis.severity, 'CRITICAL')
+    assert.ok(diagnosis.tiltScore >= 85)
+    assert.strictEqual(diagnosis.title, '치명적 멘탈 틸트 (대국 중단 강력 권장)')
+    assert.ok(diagnosis.summary.includes('타점 빈곤화'))
+    assert.ok(diagnosis.summary.includes('우형 리치 남발'))
+    assert.ok(diagnosis.summary.includes('어설픈 돌리기'))
+    assert.ok(diagnosis.advice.includes('지금 즉시 랭크 대국을 중단'))
+
+    const symptom1 = diagnosis.symptoms.find((s) => s.type === 'DORA_NEGLECT')
+    const symptom2 = diagnosis.symptoms.find((s) => s.type === 'BAD_WAIT_RIICHI')
+    const symptom3 = diagnosis.symptoms.find((s) => s.type === 'HALF_HEARTED_MAWASHIUCHI')
+
+    assert.ok(symptom1 && symptom1.detected)
+    assert.ok(symptom2 && symptom2.detected)
+    assert.ok(symptom3 && symptom3.detected)
+    assert.ok(symptom1.description.includes('급감'))
+    assert.ok(symptom2.description.includes('우형 대기'))
+    assert.ok(symptom3.description.includes('어설픈 돌리기'))
+})
+
+test('StyleEvaluator - diagnoseTilt: Warning tilt detected with 2 symptoms', () => {
+    const evaluator = new StyleEvaluator()
+
+    const input: TiltEvaluationInput = {
+        baseline: StyleEvaluator.DEFAULT_4P_BASELINE,
+        recent: {
+            avgWinScore: 5000, // Drop > 26% (Triggered)
+            badWaitRiichiRate: 36.0, // Increase +16%p (Triggered)
+            halfHeartedDealInRate: 9.0 // Normal (+0.5%p, not triggered)
+        },
+        slumpGameCount: 50,
+        gameMode: '4p'
+    }
+
+    const diagnosis = evaluator.diagnoseTilt(input)
+
+    assert.strictEqual(diagnosis.isTilt, true)
+    assert.strictEqual(diagnosis.severity, 'WARNING')
+    assert.ok(diagnosis.tiltScore >= 65 && diagnosis.tiltScore < 85)
+    assert.strictEqual(diagnosis.title, '경고: 틸트 징후 감지 (페이스 조절 필요)')
+    assert.ok(diagnosis.summary.includes('타점 빈곤화'))
+    assert.ok(diagnosis.summary.includes('우형 리치 급증'))
+})
+
+test('StyleEvaluator - diagnoseTilt: Caution state with 1 symptom', () => {
+    const evaluator = new StyleEvaluator()
+
+    const input: TiltEvaluationInput = {
+        baseline: StyleEvaluator.DEFAULT_3P_BASELINE,
+        recent: {
+            avgWinScore: 8100, // Normal
+            badWaitRiichiRate: 39.0, // Bad Wait triggered (>= 38%)
+            halfHeartedDealInRate: 9.5 // Normal
+        },
+        slumpGameCount: 30,
+        gameMode: '3p'
+    }
+
+    const diagnosis = evaluator.diagnoseTilt(input)
+
+    assert.strictEqual(diagnosis.isTilt, false)
+    assert.strictEqual(diagnosis.severity, 'CAUTION')
+    assert.ok(diagnosis.tiltScore >= 40 && diagnosis.tiltScore < 65)
+    assert.strictEqual(diagnosis.title, '주의: 부분적 멘탈 흔들림')
+})
+
+test('StyleEvaluator - diagnoseTilt: Normal mental state when baseline is maintained', () => {
+    const evaluator = new StyleEvaluator()
+
+    const input: TiltEvaluationInput = {
+        baseline: StyleEvaluator.DEFAULT_3P_BASELINE,
+        recent: {
+            avgWinScore: 8400,
+            badWaitRiichiRate: 19.5,
+            halfHeartedDealInRate: 8.5
+        },
+        slumpGameCount: 100,
+        gameMode: '3p'
+    }
+
+    const diagnosis = evaluator.diagnoseTilt(input)
+
+    assert.strictEqual(diagnosis.isTilt, false)
+    assert.strictEqual(diagnosis.severity, 'NORMAL')
+    assert.strictEqual(diagnosis.tiltScore, 15)
+    assert.strictEqual(diagnosis.title, '안정적인 멘탈 상태')
+    assert.strictEqual(diagnosis.symptoms.every((s) => !s.detected), true)
 })
