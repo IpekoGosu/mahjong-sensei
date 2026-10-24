@@ -2,7 +2,7 @@ import { SeatIndex } from './paipu'
 
 export type GameMode = '4p' | '3p'
 
-export type RollingWindowSize = 10 | 30 | 50
+export type RollingWindowSize = 10 | 30 | 50 | 100
 
 export type PerformanceQuadrant =
     | 'SKILLFUL_WIN' // 1사분면: 실력 좋음 + 운 좋음
@@ -121,6 +121,20 @@ export interface StyleEvaluationInput {
     readonly averageSkillScore?: number
 }
 
+export type SlumpStatus = 'NORMAL' | 'MILD_SLUMP' | 'SEVERE_HARFUKA' | 'HELL_MODE'
+
+export interface SlumpSeverityResult {
+    readonly percentile: number // 예: 0.6 (상위 0.6% 수준의 불운)
+    readonly occurrenceProbability: number // 2000판 중 우연히 겪을 확률 (0~1)
+    readonly zScore: number // 음수일수록 불운
+    readonly status: SlumpStatus
+    readonly message: string // 한글 안내 문구
+    readonly lastPlacePValue?: number
+    readonly topPlacePValue?: number
+    readonly sampleMean?: number
+    readonly sampleVariance?: number
+}
+
 export interface RollingWindowStats {
     readonly windowSize: RollingWindowSize
     readonly gameMode?: GameMode
@@ -142,6 +156,7 @@ export interface RollingWindowStats {
     readonly initiativeRate?: number
     readonly uradoraRate?: number
     readonly styleDiagnosis?: StyleDiagnosis
+    readonly slumpSeverity?: SlumpSeverityResult
     readonly totalUnavoidableLoss?: number
     readonly totalDealInLoss?: number
     readonly tsumoLossRate?: number

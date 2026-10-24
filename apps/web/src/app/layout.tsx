@@ -3,7 +3,7 @@ import './globals.css'
 
 export const metadata: Metadata = {
     title: 'Mahjong Sensei - 작혼 패보 및 운/실력 분석',
-    description: '작혼 대국 데이터를 분석하여 최근 10-30-50판 운과 실력을 객관적으로 분리해주는 분석 플랫폼'
+    description: '작혼 대국 데이터를 분석하여 최근 10-30-50-100판 운과 실력을 객관적으로 분리해주는 분석 플랫폼'
 }
 
 export default function RootLayout({

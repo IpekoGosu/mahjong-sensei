@@ -727,6 +727,147 @@ export default function DashboardPage(): React.ReactElement {
                 </div>
             </section>
 
+            {/* Harfuka / Slump Severity Meter Widget */}
+            {(() => {
+                const slump = currentStats.slumpSeverity ?? {
+                    percentile: 50.0,
+                    occurrenceProbability: 1.0,
+                    zScore: 0,
+                    status: 'NORMAL',
+                    message: '정상적인 분산 범위 내에서 순항 중입니다.'
+                }
+
+                const statusConfig = {
+                    NORMAL: {
+                        badgeBg: 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300',
+                        meterColor: 'bg-emerald-500',
+                        label: '정상 상태 (NORMAL)',
+                        icon: ShieldAlert,
+                        iconColor: 'text-emerald-400',
+                        barPercent: Math.max(10, Math.min(30, 20 + slump.zScore * 5))
+                    },
+                    MILD_SLUMP: {
+                        badgeBg: 'bg-amber-950/60 border-amber-500/40 text-amber-300',
+                        meterColor: 'bg-amber-500',
+                        label: '가벼운 하후카 (MILD SLUMP)',
+                        icon: AlertCircle,
+                        iconColor: 'text-amber-400',
+                        barPercent: Math.max(35, Math.min(60, 45 + Math.abs(slump.zScore) * 8))
+                    },
+                    SEVERE_HARFUKA: {
+                        badgeBg: 'bg-orange-950/60 border-orange-500/40 text-orange-300',
+                        meterColor: 'bg-orange-500',
+                        label: '심각한 하후카 (SEVERE HARFUKA)',
+                        icon: Flame,
+                        iconColor: 'text-orange-400',
+                        barPercent: Math.max(65, Math.min(85, 70 + Math.abs(slump.zScore) * 5))
+                    },
+                    HELL_MODE: {
+                        badgeBg: 'bg-rose-950/80 border-rose-500/60 text-rose-300 animate-pulse',
+                        meterColor: 'bg-rose-600 shadow-[0_0_12px_rgba(225,29,72,0.8)]',
+                        label: '지옥 모드 (HELL MODE)',
+                        icon: Flame,
+                        iconColor: 'text-rose-400',
+                        barPercent: 96
+                    }
+                }[slump.status]
+
+                const StatusIcon = statusConfig.icon
+
+                return (
+                    <section className="p-6 rounded-2xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-sm shadow-lg">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2.5 rounded-xl bg-slate-800/90 border border-slate-700/80">
+                                    <StatusIcon className={`w-5 h-5 ${statusConfig.iconColor}`} />
+                                </div>
+                                <div>
+                                    <h2 className="text-base font-bold text-white flex items-center gap-2">
+                                        하후카 / 불운 심각도 게이지 (Harfuka Meter)
+                                        <span className="text-xs font-normal text-slate-400 bg-slate-800 px-2 py-0.5 rounded-md">
+                                            최근 {currentStats.totalGames}국 통계 검정
+                                        </span>
+                                    </h2>
+                                    <p className="text-xs text-slate-400 mt-0.5">
+                                        장기 베이스라인 대비 정규 근사 Z-Score 및 단측 이항 검정 기반 하후카(하강기) 진단
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <span className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${statusConfig.badgeBg}`}>
+                                    {statusConfig.label}
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Slump Metrics Grid */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+                            <div className="p-3.5 rounded-xl bg-slate-800/40 border border-slate-700/50">
+                                <div className="text-xs text-slate-400 mb-1">불운 백분위수 (Percentile)</div>
+                                <div className="text-xl font-bold text-white flex items-baseline gap-1">
+                                    <span>상위 {slump.percentile}%</span>
+                                    <span className="text-xs font-normal text-slate-400">수준의 억까</span>
+                                </div>
+                                <div className="text-[11px] text-slate-500 mt-0.5">
+                                    낮을수록 통계적 극단값(희귀 불운)
+                                </div>
+                            </div>
+
+                            <div className="p-3.5 rounded-xl bg-slate-800/40 border border-slate-700/50">
+                                <div className="text-xs text-slate-400 mb-1">통계적 편차 (Z-Score)</div>
+                                <div className="text-xl font-bold text-white flex items-baseline gap-1">
+                                    <span className={slump.zScore < 0 ? 'text-rose-400' : 'text-emerald-400'}>
+                                        {slump.zScore > 0 ? '+' : ''}{slump.zScore.toFixed(2)}
+                                    </span>
+                                    <span className="text-xs font-normal text-slate-400">σ (표준편차)</span>
+                                </div>
+                                <div className="text-[11px] text-slate-500 mt-0.5">
+                                    음수 값이 클수록 기대 순위 미달
+                                </div>
+                            </div>
+
+                            <div className="p-3.5 rounded-xl bg-slate-800/40 border border-slate-700/50">
+                                <div className="text-xs text-slate-400 mb-1">2,000판 중 조우 확률</div>
+                                <div className="text-xl font-bold text-white flex items-baseline gap-1">
+                                    <span className={slump.occurrenceProbability < 0.2 ? 'text-rose-400' : 'text-amber-300'}>
+                                        {(slump.occurrenceProbability * 100).toFixed(1)}%
+                                    </span>
+                                    <span className="text-xs font-normal text-slate-400">발생 가능</span>
+                                </div>
+                                <div className="text-[11px] text-slate-500 mt-0.5">
+                                    커리어 2,000판 중 우연히 겪을 확률
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Visual Segmented Gauge Bar */}
+                        <div className="mb-4">
+                            <div className="flex justify-between text-[11px] font-medium text-slate-400 mb-1.5 px-0.5">
+                                <span className={slump.status === 'NORMAL' ? 'text-emerald-400 font-bold' : ''}>정상 분산</span>
+                                <span className={slump.status === 'MILD_SLUMP' ? 'text-amber-400 font-bold' : ''}>가벼운 하후카 (상위 16%)</span>
+                                <span className={slump.status === 'SEVERE_HARFUKA' ? 'text-orange-400 font-bold' : ''}>심각한 하후카 (상위 2.5%)</span>
+                                <span className={slump.status === 'HELL_MODE' ? 'text-rose-400 font-bold animate-pulse' : ''}>지옥 모드 (3σ 초과)</span>
+                            </div>
+                            <div className="h-3 w-full bg-slate-800 rounded-full overflow-hidden p-0.5 border border-slate-700 flex relative">
+                                <div
+                                    className={`h-full rounded-full transition-all duration-700 ${statusConfig.meterColor}`}
+                                    style={{ width: `${statusConfig.barPercent}%` }}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Empathy & Self-awareness Guidance Callout */}
+                        <div className="p-4 rounded-xl bg-slate-800/60 border border-slate-700/60 flex items-start gap-3">
+                            <Sparkles className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                            <div className="text-xs leading-relaxed text-slate-300">
+                                <span className="font-semibold text-amber-300 mr-1.5">멘탈 케어 & 자기 객관화 가이드:</span>
+                                {slump.message}
+                            </div>
+                        </div>
+                    </section>
+                )
+            })()}
+
             {/* 3P Unavoidable Tsumo Loss & Opponent Luck Report Card */}
             <section className="p-6 rounded-2xl bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-indigo-950/40 border border-slate-800 shadow-xl space-y-6">
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-4 border-b border-slate-800/80">

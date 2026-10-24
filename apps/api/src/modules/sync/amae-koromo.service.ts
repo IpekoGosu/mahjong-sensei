@@ -548,7 +548,7 @@ export class AmaeKoromoService {
     public async syncPlayerByNickname(
         nickname: string,
         mode: GameMode = '3p',
-        targetGameCount: number = 50
+        targetGameCount: number = 100
     ): Promise<SyncPlayerResult> {
         /*_ GEMINI THINKING _*/
         const apiPrefix = mode === '3p' ? '/api/v2/pl3' : '/api/v2/pl4'
