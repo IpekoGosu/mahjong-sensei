@@ -17,7 +17,8 @@ import {
     AiRankEvaluator,
     StyleEvaluator,
     CoachingAdvisor,
-    LiqiBinaryDecoder
+    LiqiBinaryDecoder,
+    SlumpProbabilityCalculator
 } from '@mahjong-sensei/mahjong-core'
 
 
@@ -122,6 +123,7 @@ export class AnalysisService {
     private readonly aiRankEvaluator: AiRankEvaluator = new AiRankEvaluator()
     private readonly styleEvaluator: StyleEvaluator = new StyleEvaluator()
     private readonly coachingAdvisor: CoachingAdvisor = new CoachingAdvisor()
+    private readonly slumpCalculator: SlumpProbabilityCalculator = new SlumpProbabilityCalculator()
 
     public constructor(private readonly prisma: PrismaService) {}
 
@@ -182,7 +184,14 @@ export class AnalysisService {
                 furoRate: 0,
                 damatenRate: 0,
                 initiativeRate: 0,
-                uradoraRate: 0
+                uradoraRate: 0,
+                slumpSeverity: {
+                    percentile: 50.0,
+                    occurrenceProbability: 1.0,
+                    zScore: 0,
+                    status: 'NORMAL',
+                    message: '대국 데이터가 충분하지 않습니다.'
+                }
             }
         }
 
@@ -358,6 +367,11 @@ export class AnalysisService {
             averageSkillScore
         })
 
+        const slumpSeverity = this.slumpCalculator.calculateSlumpSeverity({
+            gameMode: mode,
+            ranks: participants.map((p) => p.finalRank)
+        })
+
         return {
             windowSize,
             gameMode: mode,
@@ -377,7 +391,8 @@ export class AnalysisService {
             damatenRate,
             initiativeRate,
             uradoraRate,
-            styleDiagnosis
+            styleDiagnosis,
+            slumpSeverity
         }
     }
 
