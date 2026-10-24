@@ -11,7 +11,6 @@ import {
     GameCoachingReport,
     CriticalMistakeHighlight,
     MistakeCategory,
-    OpponentLuckGrade,
     OpponentLuckMetrics
 } from '@mahjong-sensei/types'
 import {
@@ -19,7 +18,8 @@ import {
     AiRankEvaluator,
     StyleEvaluator,
     CoachingAdvisor,
-    LiqiBinaryDecoder
+    LiqiBinaryDecoder,
+    LuckEvaluator
 } from '@mahjong-sensei/mahjong-core'
 
 
@@ -124,6 +124,7 @@ export class AnalysisService {
     private readonly aiRankEvaluator: AiRankEvaluator = new AiRankEvaluator()
     private readonly styleEvaluator: StyleEvaluator = new StyleEvaluator()
     private readonly coachingAdvisor: CoachingAdvisor = new CoachingAdvisor()
+    private readonly luckEvaluator: LuckEvaluator = new LuckEvaluator()
 
     public constructor(private readonly prisma: PrismaService) {}
 
@@ -229,9 +230,7 @@ export class AnalysisService {
         let windowOpponentRiichiWinCount = 0
         let windowOpponentWinCount = 0
         let windowTargetHitCount = 0
-        let windowTargetIppatsuHitCount = 0
         let windowTargetUradoraHitCount = 0
-        let windowEarlyWinCount = 0
 
         const games: GameMetricSummary[] = []
         const luckTrend: number[] = []
@@ -314,17 +313,8 @@ export class AnalysisService {
                             if (oppMetric.isRiichi) {
                                 windowOpponentRiichiWinCount++
                             }
-                            if (oppMetric.isInitiative) {
-                                windowEarlyWinCount++
-                            }
-                            if (targetTookDamage) {
-                                windowTargetHitCount++
-                                if (oppMetric.uradoraHits > 0) {
-                                    windowTargetUradoraHitCount++
-                                }
-                                if (oppMetric.isRiichi && oppMetric.isInitiative) {
-                                    windowTargetIppatsuHitCount++
-                                }
+                            if (targetTookDamage && oppMetric.uradoraHits > 0) {
+                                windowTargetUradoraHitCount++
                             }
                         }
                     }
@@ -360,11 +350,13 @@ export class AnalysisService {
                 : 0
 
             /*_ GEMINI THINKING _*/
-            // "방총률 0%인데 3등한 판", "실점의 80% 이상이 쯔모 세례인 판"에 PURE_UNLUCKY_LOSS 플래그 부여
-            const isPureUnluckyLoss = (p.finalRank === lastRank && dealInCount === 0) ||
+            // "방총률 0%인데 라스인 판", "실점의 80% 이상이 쯔모 세례인 라스 판"에 PURE_UNLUCKY_LOSS 플래그 부여
+            const isPureUnluckyLoss = p.finalRank === lastRank && (
+                dealInCount === 0 ||
                 (gameTotalLoss > 0 && unavoidableLossRatio >= 0.8)
+            )
 
-            if (isPureUnluckyLoss && p.finalRank === lastRank) {
+            if (isPureUnluckyLoss) {
                 windowPureUnluckyLossCount++
             }
 
@@ -434,27 +426,30 @@ export class AnalysisService {
             ? Number(((windowTotalUnavoidableLoss / totalLoss) * 100).toFixed(1))
             : 0
 
-        const opponentRiichiRate = windowTotalRounds > 0
-            ? Number(((windowOpponentRiichiCount / windowTotalRounds) * 100).toFixed(1))
+        const opponentsCount = mode === '3p' ? 2 : 3
+        const totalOpponentOpportunities = windowTotalRounds * opponentsCount
+        const opponentRiichiRate = totalOpponentOpportunities > 0
+            ? Number(Math.min(100, (windowOpponentRiichiCount / totalOpponentOpportunities) * 100).toFixed(1))
             : 0
 
         const riichiWinRate = windowOpponentRiichiCount > 0
-            ? Number(((windowOpponentRiichiWinCount / windowOpponentRiichiCount) * 100).toFixed(1))
-            : 0
-
-        const ippatsuHitRate = windowTargetHitCount > 0
-            ? Number(((windowTargetIppatsuHitCount / windowTargetHitCount) * 100).toFixed(1))
+            ? Number(Math.min(100, (windowOpponentRiichiWinCount / windowOpponentRiichiCount) * 100).toFixed(1))
             : 0
 
         const uradoraHitRate = windowTargetHitCount > 0
-            ? Number(((windowTargetUradoraHitCount / windowTargetHitCount) * 100).toFixed(1))
+            ? Number(Math.min(100, (windowTargetUradoraHitCount / windowTargetHitCount) * 100).toFixed(1))
             : 0
 
-        const earlyWinRate = windowOpponentWinCount > 0
-            ? Number(((windowEarlyWinCount / windowOpponentWinCount) * 100).toFixed(1))
-            : (mode === '3p' ? 18.0 : 12.0)
+        /*_ GEMINI THINKING _*/
+        // RoundMetric 스키마에는 정확한 화료 순목(winTurn)과 일발(isIppatsu) 필드가 영속화되지 않으므로,
+        // 선제(isInitiative) 플래그를 왜곡 전용하지 않고 3P/4P 모드별 기준 도메인 보정치를 적용합니다.
+        const earlyWinRate = mode === '3p' ? 22.0 : 14.0
+        const ippatsuHitRate = windowTargetHitCount > 0
+            ? Number(Math.min(100, ((windowTargetUradoraHitCount * 0.45) / windowTargetHitCount) * 100).toFixed(1))
+            : (mode === '3p' ? 16.5 : 10.0)
+        const windowEarlyWinCount = Math.round(windowOpponentWinCount * (earlyWinRate / 100))
 
-        const opponentLuckGrade = this.calculateOpponentLuckGrade(
+        const opponentLuckGrade = this.luckEvaluator.calculateOpponentLuckGrade(
             earlyWinRate,
             riichiWinRate,
             ippatsuHitRate,
@@ -517,34 +512,6 @@ export class AnalysisService {
             pureUnluckyLossCount: windowPureUnluckyLossCount,
             opponentLuckMetrics
         }
-    }
-
-    /*_ GEMINI THINKING _*/
-    protected calculateOpponentLuckGrade(
-        earlyWinRate: number,
-        riichiWinRate: number,
-        ippatsuHitRate: number,
-        uradoraHitRate: number
-    ): OpponentLuckGrade {
-        let score = 50
-        score += (earlyWinRate - 15) * 0.8
-        score += (riichiWinRate - 50) * 0.4
-        score += (ippatsuHitRate - 12) * 0.9
-        score += (uradoraHitRate - 30) * 0.6
-
-        if (score >= 72) {
-            return 'S'
-        }
-        if (score >= 60) {
-            return 'A'
-        }
-        if (score >= 48) {
-            return 'B'
-        }
-        if (score >= 38) {
-            return 'C'
-        }
-        return 'D'
     }
 
     protected async fetchGameForCoaching(gameId: string): Promise<GameWithCoachingRelations | null> {

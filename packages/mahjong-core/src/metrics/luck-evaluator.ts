@@ -339,7 +339,7 @@ export class LuckEvaluator {
     }
 
     /*_ GEMINI THINKING _*/
-    protected calculateOpponentLuckGrade(
+    public calculateOpponentLuckGrade(
         earlyWinRate: number,
         riichiWinRate: number,
         ippatsuHitRate: number,

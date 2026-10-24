@@ -483,7 +483,7 @@ test('AnalysisService - Unavoidable Tsumo Loss, PURE_UNLUCKY_LOSS flag and Oppon
                                 drawLuckRatio: 0.4,
                                 uradoraHits: 1,
                                 dealInScore: 0,
-                                tsumoLossScore: 0,
+                                tsumoLossScore: 1000, // 1st place player suffered 1000 tsumo loss (unavoidable ratio = 100%), but must NOT be pure unlucky loss!
                                 tileEfficiency: 0.88,
                                 luckScore: 75,
                                 skillScore: 65,
@@ -544,11 +544,11 @@ test('AnalysisService - Unavoidable Tsumo Loss, PURE_UNLUCKY_LOSS flag and Oppon
     const stats = await service.getRollingStats(10001, 10, '3p')
 
     assert.strictEqual(stats.totalGames, 3)
-    assert.strictEqual(stats.totalUnavoidableLoss, 22000) // 12000 + 10000
+    assert.strictEqual(stats.totalUnavoidableLoss, 23000) // 12000 + 1000 + 10000
     assert.strictEqual(stats.totalDealInLoss, 2000)
     assert.strictEqual(stats.pureUnluckyLossCount, 2) // Both rank 3 games were pure unlucky losses
-    // Tsumo loss rate = 22000 / 24000 * 100 = 91.7%
-    assert.strictEqual(stats.tsumoLossRate, 91.7)
+    // Tsumo loss rate = 23000 / 25000 * 100 = 92.0%
+    assert.strictEqual(stats.tsumoLossRate, 92.0)
 
     assert.ok(stats.opponentLuckGrade !== undefined)
     assert.ok(stats.opponentLuckMetrics !== undefined)
@@ -560,8 +560,11 @@ test('AnalysisService - Unavoidable Tsumo Loss, PURE_UNLUCKY_LOSS flag and Oppon
     assert.strictEqual(game1.totalDealInLoss, 0)
     assert.strictEqual(game1.isPureUnluckyLoss, true)
 
+    // 1st place game MUST NOT have isPureUnluckyLoss even with 100% unavoidable loss!
     const game2 = stats.games.find(g => g.gameId === 'game-win-2')
     assert.ok(game2 !== undefined)
+    assert.strictEqual(game2.totalUnavoidableLoss, 1000)
+    assert.strictEqual(game2.unavoidableLossRatio, 1.0)
     assert.strictEqual(game2.isPureUnluckyLoss, false)
 
     const game3 = stats.games.find(g => g.gameId === 'game-unlucky-3')

@@ -532,14 +532,14 @@ export default function DashboardPage(): React.ReactElement {
     const totalLossPoints = (currentStats.totalUnavoidableLoss ?? 0) + (currentStats.totalDealInLoss ?? 0)
     const unavoidablePercent = totalLossPoints > 0
         ? Number((((currentStats.totalUnavoidableLoss ?? 0) / totalLossPoints) * 100).toFixed(1))
-        : (gameMode === '3p' ? 69.6 : 47.5)
+        : 0
     const dealInPercent = totalLossPoints > 0
         ? Number((100 - unavoidablePercent).toFixed(1))
-        : Number((100 - unavoidablePercent).toFixed(1))
+        : 0
 
     const totalGamesCount = currentStats.totalGames
     const lastPlaceCount = Math.round((currentStats.totalGames * (currentStats.lastPlaceRate / 100)))
-    const pureUnluckyCount = currentStats.pureUnluckyLossCount ?? (gameMode === '3p' ? Math.min(lastPlaceCount, 14) : 3)
+    const pureUnluckyCount = currentStats.pureUnluckyLossCount ?? 0
 
     return (
         <main className="max-w-7xl mx-auto px-4 py-8 space-y-8">
