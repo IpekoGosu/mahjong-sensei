@@ -17,7 +17,8 @@ import {
     AiRankEvaluator,
     StyleEvaluator,
     CoachingAdvisor,
-    LiqiBinaryDecoder
+    LiqiBinaryDecoder,
+    ScoreSituationEvaluator
 } from '@mahjong-sensei/mahjong-core'
 
 
@@ -122,6 +123,7 @@ export class AnalysisService {
     private readonly aiRankEvaluator: AiRankEvaluator = new AiRankEvaluator()
     private readonly styleEvaluator: StyleEvaluator = new StyleEvaluator()
     private readonly coachingAdvisor: CoachingAdvisor = new CoachingAdvisor()
+    private readonly situationEvaluator: ScoreSituationEvaluator = new ScoreSituationEvaluator()
 
     public constructor(private readonly prisma: PrismaService) {}
 
@@ -554,6 +556,53 @@ export class AnalysisService {
             actionableAdviceKo.push('현재의 높은 타패 효율을 유지하되, 고타점 직격 기회에서 다마텐과 리치의 공수 밸런스를 더욱 정교화하세요.')
         }
 
+        const finalRank = participant?.finalRank ?? 2
+        let situationScore = 80
+        if (finalRank === 1) {
+            situationScore = 95
+        } else if (finalRank === 2) {
+            situationScore = 85
+        } else if (finalRank === 3) {
+            situationScore = is3P ? 55 : 70
+        } else if (finalRank === 4) {
+            situationScore = 50
+        }
+
+        if (dealInCount > 0) {
+            situationScore = Math.max(25, situationScore - (dealInCount * 15))
+        }
+
+        const isLastRoundDealIn = game.rounds.length > 0 &&
+            ((game.rounds[game.rounds.length - 1]?.roundMetrics.find((m) => m.seat === targetSeat)?.dealInScore ?? 0) > 0)
+
+        const droppedFrom2ndTo3rd = is3P && finalRank === 3 && isLastRoundDealIn
+
+        if (droppedFrom2ndTo3rd) {
+            situationScore = Math.min(situationScore, 40)
+            actionableAdviceKo.unshift('3인 마작 오라스 2위 국면에서는 3위(라스) 방어가 최우선입니다. 3위와의 점수차를 지키며 철저히 수비하세요.')
+        }
+
+        const lastRound = game.rounds[game.rounds.length - 1]
+        const lastRoundIndex = lastRound?.roundIndex ?? 0
+        const isSouthRoom = game.roomType.includes('남') || game.roomType.includes('South')
+        const chang = isSouthRoom ? 1 : 0
+        const ju = lastRoundIndex % (is3P ? 3 : 4)
+        const isOrasuGame = (game.rounds.length > 0) && (
+            this.situationEvaluator.isOrasu(chang, ju, is3P, !isSouthRoom) ||
+            lastRoundIndex >= (is3P ? 2 : 3)
+        )
+
+        const orasuEvaluation = (game.rounds.length > 0 && isOrasuGame) ? {
+            isOrasuEvaluated: true,
+            situationScore,
+            droppedFrom2ndTo3rd,
+            summaryKo: droppedFrom2ndTo3rd
+                ? '오라스 2위 상황에서 방총으로 인해 3위(라스) 전락'
+                : finalRank <= 2
+                    ? '오라스 상황에서 안정적인 방어 및 순위 방어 성공'
+                    : '오라스 국면 정상 종료'
+        } : undefined
+
         return {
             gameId: game.id,
             targetSeat,
@@ -561,7 +610,9 @@ export class AnalysisService {
             quadrant,
             criticalMistakes,
             overallSummaryKo,
-            actionableAdviceKo
+            actionableAdviceKo,
+            situationScore,
+            orasuEvaluation
         }
     }
 }

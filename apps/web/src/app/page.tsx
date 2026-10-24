@@ -307,6 +307,18 @@ export default function DashboardPage(): React.ReactElement {
 
     const getMistakeCategoryBadge = (category: string): { readonly label: string; readonly badgeClass: string } => {
         switch (category) {
+            case 'ORASU_FATAL_DEAL_IN':
+            case 'ORASU_SECOND_DEFENSE_FAILURE':
+                return {
+                    label: '🚨 오라스 2위 수비 실패 (라스 추락)',
+                    badgeClass: 'bg-red-600/30 text-red-300 border-red-500/50'
+                }
+            case 'HIGH_VALUE_RISK_DEAL_IN':
+            case 'KITA_DORA_DEAL_IN':
+                return {
+                    label: '💥 고타점(키타/도라) 방총 직격',
+                    badgeClass: 'bg-orange-600/30 text-orange-300 border-orange-500/50'
+                }
             case 'RECKLESS_PUSH_DEAL_IN':
                 return {
                     label: '🚨 무리한 승부 (방총 직격)',
@@ -1084,9 +1096,16 @@ export default function DashboardPage(): React.ReactElement {
                                 <div className="p-4 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-2">
                                     <div className="flex items-center justify-between">
                                         <span className="text-xs text-slate-400 font-semibold tracking-wider uppercase">대국 종합 진단</span>
-                                        <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                                            {coachingReport.is3P ? '3인 마작' : '4인 마작'}
-                                        </span>
+                                        <div className="flex items-center gap-2">
+                                            {coachingReport.situationScore !== undefined && (
+                                                <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                                                    점황 {coachingReport.situationScore}점
+                                                </span>
+                                            )}
+                                            <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                                                {coachingReport.is3P ? '3인 마작' : '4인 마작'}
+                                            </span>
+                                        </div>
                                     </div>
                                     <p className="text-sm text-slate-200 leading-relaxed font-medium">
                                         "{coachingReport.overallSummaryKo}"
