@@ -6,7 +6,8 @@ import {
     RollingWindowSize,
     RollingWindowStats,
     PerformanceQuadrant,
-    GameCoachingReport
+    GameCoachingReport,
+    BatchImportPaipuResult
 } from '@mahjong-sensei/types'
 import {
     TrendingUp,
@@ -23,6 +24,7 @@ import {
     HelpCircle,
     Clock,
     Share2,
+    Upload,
     X,
     Check,
     AlertCircle,
@@ -30,8 +32,6 @@ import {
 } from 'lucide-react'
 import { TierBenchmarkShareCard } from '../components/TierBenchmarkShareCard'
 import { PaipuRoundInspectorModal } from '../components/PaipuRoundInspectorModal'
-import { PaipuBatchModal } from '../components/PaipuBatchModal'
-
 
 import {
     LineChart,
@@ -55,6 +55,7 @@ export default function DashboardPage(): React.ReactElement {
     const [stats, setStats] = useState<RollingWindowStats | null>(null)
     const [paipuInput, setPaipuInput] = useState<string>('')
     const [batchModalOpen, setBatchModalOpen] = useState<boolean>(false)
+    const [batchInput, setBatchInput] = useState<string>('')
     const [syncing, setSyncing] = useState<boolean>(false)
     const [importing, setImporting] = useState<boolean>(false)
     const [statusMessage, setStatusMessage] = useState<string>('')
@@ -63,6 +64,8 @@ export default function DashboardPage(): React.ReactElement {
     const [coachingReport, setCoachingReport] = useState<GameCoachingReport | null>(null)
     const [coachingLoading, setCoachingLoading] = useState<boolean>(false)
     const [coachingError, setCoachingError] = useState<string | null>(null)
+    const [importTab, setImportTab] = useState<'batch' | 'file'>('batch')
+    const [selectedFile, setSelectedFile] = useState<File | null>(null)
     const [selectedInspectorGameId, setSelectedInspectorGameId] = useState<string | null>(null)
     const [isMounted, setIsMounted] = useState<boolean>(false)
     const [, startTransition] = useTransition()
@@ -168,6 +171,118 @@ export default function DashboardPage(): React.ReactElement {
         }
     }
 
+    const handleBatchImport = async (): Promise<void> => {
+        const rawLines = batchInput.split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
+        const uniqueLines = Array.from(new Set(rawLines))
+        if (uniqueLines.length === 0) {
+            return
+        }
+
+        setImporting(true)
+        setStatusMessage(`${uniqueLines.length}개의 실제 패보 일괄 등록 및 정밀 분석 중...`)
+
+        try {
+            const res = await fetch(`${apiUrl}/paipu/import-batch`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ inputs: uniqueLines })
+            })
+
+            if (res.ok) {
+                const data = (await res.json()) as BatchImportPaipuResult
+                const parts: string[] = []
+                if (data.imported > 0) {
+                    parts.push(`신규 등록 ${data.imported}건`)
+                }
+                if (data.existing > 0) {
+                    parts.push(`기존 등록 ${data.existing}건`)
+                }
+                if (data.failed > 0) {
+                    parts.push(`실패 ${data.failed}건`)
+                }
+                if (parts.length === 0) {
+                    parts.push('처리 내역 없음')
+                }
+
+                const isAllFailed = data.imported === 0 && data.existing === 0 && data.failed > 0
+                const isPartialFailed = data.failed > 0
+                const icon = isAllFailed ? '❌' : isPartialFailed ? '⚠️' : '✅'
+
+                setStatusMessage(`${icon} 총 ${data.total}개 중 ${parts.join(', ')} 처리되었습니다.`)
+
+                // 하나라도 신규 또는 기존 등록이 성공했을 때만 모달을 닫고 입력을 초기화
+                if (data.imported > 0 || data.existing > 0) {
+                    setBatchInput('')
+                    setBatchModalOpen(false)
+                    void fetchStats(accountId, windowSize, gameMode)
+                }
+            } else {
+                setStatusMessage('⚠️ 패보 일괄 등록 중 일부 실패가 발생했습니다.')
+            }
+        } catch {
+            setStatusMessage('⚠️ 백엔드 서버 연결에 실패했습니다.')
+        } finally {
+            setImporting(false)
+        }
+    }
+
+    /*_ GEMINI THINKING _*/
+    const handleFileUpload = async (): Promise<void> => {
+        if (!selectedFile) {
+            return
+        }
+
+        setImporting(true)
+        setStatusMessage(`파일 업로드 및 패보 디코딩 중... (${selectedFile.name})`)
+
+        try {
+            const isJson = selectedFile.name.toLowerCase().endsWith('.json')
+            let content = ''
+            let format: 'json' | 'base64' = 'json'
+
+            if (isJson) {
+                content = await selectedFile.text()
+                format = 'json'
+            } else {
+                content = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader()
+                    reader.onload = () => {
+                        const result = reader.result
+                        if (typeof result === 'string') {
+                            const base64Data = result.split(',')[1] ?? ''
+                            resolve(base64Data)
+                        } else {
+                            reject(new Error('파일 인코딩 실패'))
+                        }
+                    }
+                    reader.onerror = () => reject(reader.error)
+                    reader.readAsDataURL(selectedFile)
+                })
+                format = 'base64'
+            }
+
+            const res = await fetch(`${apiUrl}/paipu/upload`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content, format })
+            })
+
+            if (res.ok) {
+                const data = (await res.json()) as { readonly success: boolean; readonly gameId: string }
+                setStatusMessage(`✅ 파일 패보(${data.gameId})가 성공적으로 디코딩 및 등록되었습니다!`)
+                setSelectedFile(null)
+                setBatchModalOpen(false)
+                fetchStats(accountId, windowSize, gameMode)
+            } else {
+                const errData = (await res.json().catch(() => null)) as { readonly message?: string } | null
+                setStatusMessage(`⚠️ 패보 업로드 실패: ${errData?.message ?? '형식이 올바르지 않습니다.'}`)
+            }
+        } catch {
+            setStatusMessage('⚠️ 패보 파일 처리 중 오류가 발생했습니다.')
+        } finally {
+            setImporting(false)
+        }
+    }
 
     const handleOpenCoaching = async (gameId: string): Promise<void> => {
         setCoachingGameId(gameId)
@@ -244,6 +359,23 @@ export default function DashboardPage(): React.ReactElement {
                 damatenRate: 19.2,
                 initiativeRate: 81.0,
                 uradoraRate: 43.2,
+                totalUnavoidableLoss: 64200,
+                totalDealInLoss: 28000,
+                tsumoLossRate: 69.6,
+                pureUnluckyLossCount: 14,
+                opponentLuckGrade: 'A',
+                opponentLuckMetrics: {
+                    avgTenpaiTurn: 6.8,
+                    avgWinTurn: 8.2,
+                    earlyWinRate: 24.5,
+                    earlyWinCount: 32,
+                    totalOpponentWins: 130,
+                    opponentRiichiRate: 28.0,
+                    riichiWinRate: 58.5,
+                    ippatsuHitRate: 18.2,
+                    uradoraHitRate: 46.5,
+                    opponentLuckGrade: 'A'
+                },
                 styleDiagnosis: {
                     title: '카운터 다마텐 & 철벽 수비',
                     description: '다마텐율 19.2%와 선제율 81%로 상대를 침착하게 공략하며, 들통율이 3.7%에 불과합니다.',
@@ -251,13 +383,6 @@ export default function DashboardPage(): React.ReactElement {
                     defenseType: '철벽 수비',
                     luckRemark: '도라 편중 호조',
                     skillRemark: '3마 상위 5% 철벽 수비'
-                },
-                slumpSeverity: {
-                    percentile: 8.5,
-                    occurrenceProbability: 0.998,
-                    zScore: -1.37,
-                    status: 'MILD_SLUMP',
-                    message: '가벼운 하후카 구간입니다 (상위 8.5%). 마작에서 흔히 발생하는 단기 분산의 파도이니 평정심을 유지하며 타패 효율에 집중하세요. 최근 라스 집중 확률은 12.4%로 다소의 억까를 겪고 있습니다.'
                 }
             }
             : {
@@ -280,6 +405,23 @@ export default function DashboardPage(): React.ReactElement {
                 damatenRate: 14.5,
                 initiativeRate: 85.0,
                 uradoraRate: 27.8,
+                totalUnavoidableLoss: 38000,
+                totalDealInLoss: 42000,
+                tsumoLossRate: 47.5,
+                pureUnluckyLossCount: 3,
+                opponentLuckGrade: 'B',
+                opponentLuckMetrics: {
+                    avgTenpaiTurn: 8.0,
+                    avgWinTurn: 9.3,
+                    earlyWinRate: 12.0,
+                    earlyWinCount: 15,
+                    totalOpponentWins: 125,
+                    opponentRiichiRate: 22.0,
+                    riichiWinRate: 48.0,
+                    ippatsuHitRate: 10.5,
+                    uradoraHitRate: 28.0,
+                    opponentLuckGrade: 'B'
+                },
                 styleDiagnosis: {
                     title: '단단한 멘젠 선제형',
                     description: '후로율 27.6%와 선제 리치율 85%의 강한 공격력으로 연대율 56%를 견인하고 있습니다.',
@@ -287,13 +429,6 @@ export default function DashboardPage(): React.ReactElement {
                     defenseType: '안정 수비',
                     luckRemark: '정직한 승부',
                     skillRemark: '상위 15% 방총 제어'
-                },
-                slumpSeverity: {
-                    percentile: 62.4,
-                    occurrenceProbability: 1.0,
-                    zScore: 0.32,
-                    status: 'NORMAL',
-                    message: '정상적인 분산 범위 내에서 순항 중입니다 (상위 62.4%). 운에 흔들리지 않는 견고한 타패를 유지하고 있습니다.'
                 }
             }
     )
@@ -322,10 +457,6 @@ export default function DashboardPage(): React.ReactElement {
             rank: currentStats.rankTrend[index] ?? (gameMode === '3p' ? 2 : 2.5)
         }
     })
-
-    const trendXAxisInterval = chartData.length > 50
-        ? 9
-        : (chartData.length > 20 ? 4 : (chartData.length > 10 ? 2 : 0))
 
     const scatterData = currentStats.games.map((g, idx) => ({
         index: idx + 1,
@@ -397,6 +528,18 @@ export default function DashboardPage(): React.ReactElement {
                 return 'bg-rose-500/20 text-rose-300 border-rose-500/40'
         }
     }
+
+    const totalLossPoints = (currentStats.totalUnavoidableLoss ?? 0) + (currentStats.totalDealInLoss ?? 0)
+    const unavoidablePercent = totalLossPoints > 0
+        ? Number((((currentStats.totalUnavoidableLoss ?? 0) / totalLossPoints) * 100).toFixed(1))
+        : 0
+    const dealInPercent = totalLossPoints > 0
+        ? Number((100 - unavoidablePercent).toFixed(1))
+        : 0
+
+    const totalGamesCount = currentStats.totalGames
+    const lastPlaceCount = Math.round((currentStats.totalGames * (currentStats.lastPlaceRate / 100)))
+    const pureUnluckyCount = currentStats.pureUnluckyLossCount ?? 0
 
     return (
         <main className="max-w-7xl mx-auto px-4 py-8 space-y-8">
@@ -505,9 +648,9 @@ export default function DashboardPage(): React.ReactElement {
                     </button>
                 </div>
 
-                {/* Rolling Window (10, 30, 50, 100) */}
+                {/* Rolling Window (10, 30, 50) */}
                 <div className="flex items-center gap-2 bg-slate-900 p-1 rounded-xl border border-slate-800">
-                    {([10, 30, 50, 100] as const).map((size) => (
+                    {([10, 30, 50] as const).map((size) => (
                         <button
                             key={size}
                             onClick={() => setWindowSize(size)}
@@ -725,6 +868,169 @@ export default function DashboardPage(): React.ReactElement {
                 )
             })()}
 
+            {/* 3P Unavoidable Tsumo Loss & Opponent Luck Report Card */}
+            <section className="p-6 rounded-2xl bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-indigo-950/40 border border-slate-800 shadow-xl space-y-6">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-4 border-b border-slate-800/80">
+                    <div>
+                        <div className="flex items-center gap-2">
+                            <h2 className="text-xl font-black text-white flex items-center gap-2">
+                                <Flame className="w-5 h-5 text-rose-500" />
+                                {gameMode === '3p' ? '3인 마작 비회피 실점(Tsumo Loss) & 상대방 행운 분석' : '비회피 실점 및 상대방 행운 리포트'}
+                            </h2>
+                            <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                                3P 억까 방어 분석
+                            </span>
+                        </div>
+                        <p className="text-xs text-slate-400 mt-1">
+                            3인 마작 특유의 쯔모손실(Tsumo Loss) 룰 하에서 발생하는 불가항력적 실점(오야 쯔모 폭격)과 상대방의 일발/우라도라 행운을 정밀 추적합니다.
+                        </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 bg-slate-950/60 px-4 py-2 rounded-xl border border-slate-800">
+                        <span className="text-xs text-slate-400">상대방 행운 등급:</span>
+                        <span className={`px-2.5 py-0.5 rounded-md text-sm font-black border ${getAiGradeBadgeClass(currentStats.opponentLuckGrade ?? 'B')}`}>
+                            Grade {currentStats.opponentLuckGrade ?? 'B'}
+                        </span>
+                    </div>
+                </div>
+
+                {/* Highlight Banner: 순수 억까 패배 리포트 */}
+                <div className="p-4 rounded-xl bg-rose-950/30 border border-rose-500/30 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                        <div className="text-base md:text-lg font-extrabold text-white flex items-center gap-2">
+                            <span className="text-rose-400">🚨</span>
+                            <span>
+                                최근 {totalGamesCount}판 중 라스 {lastPlaceCount}회 가운데 <strong className="text-amber-300 underline decoration-amber-400 underline-offset-4">{pureUnluckyCount}회</strong>는 불가항력 쯔모 세례에 의한 순수 억까 패배였습니다
+                            </span>
+                        </div>
+                        <p className="text-xs text-rose-200/70">
+                            방총률 0%로 완벽하게 수비했거나 실점의 80% 이상이 타가의 오야 연속 쯔모 화료로 발생하여 기록된 불가항력 대국입니다.
+                        </p>
+                    </div>
+
+                    <div className="shrink-0 flex items-center gap-2 bg-rose-900/40 px-3 py-1.5 rounded-lg border border-rose-700/50 text-xs font-semibold text-rose-200">
+                        <span>순수 억까 라스율</span>
+                        <span className="text-sm font-black text-amber-300 font-mono">
+                            {lastPlaceCount > 0 ? Number(((pureUnluckyCount / lastPlaceCount) * 100).toFixed(1)) : 0}%
+                        </span>
+                    </div>
+                </div>
+
+                {/* Comparison Bar: 방총 실점(자책점) vs 불가항력 쯔모 실점(불운) */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 pt-1">
+                    {/* 실점 구성 분석 */}
+                    <div className="bg-slate-950/60 p-5 rounded-xl border border-slate-800 space-y-4">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-sm font-bold text-slate-200 flex items-center gap-1.5">
+                                <ShieldAlert className="w-4 h-4 text-amber-400" />
+                                실점 구성 분석 (자책점 vs 불가항력 불운)
+                            </h3>
+                            <span className="text-xs text-slate-400 font-mono">
+                                총 실점 {totalLossPoints.toLocaleString()}점
+                            </span>
+                        </div>
+
+                        {/* Stacked Progress Bar */}
+                        <div className="space-y-1.5">
+                            <div className="h-6 w-full rounded-lg overflow-hidden flex bg-slate-800">
+                                <div
+                                    style={{ width: `${dealInPercent}%` }}
+                                    className="bg-gradient-to-r from-rose-600 to-rose-500 flex items-center justify-center text-[11px] font-bold text-white transition-all duration-500 overflow-hidden px-1"
+                                    title={`방총 실점: ${dealInPercent}%`}
+                                >
+                                    {dealInPercent > 12 ? `방총 ${dealInPercent}%` : ''}
+                                </div>
+                                <div
+                                    style={{ width: `${unavoidablePercent}%` }}
+                                    className="bg-gradient-to-r from-purple-600 to-indigo-500 flex items-center justify-center text-[11px] font-bold text-white transition-all duration-500 overflow-hidden px-1"
+                                    title={`불가항력 쯔모 실점: ${unavoidablePercent}%`}
+                                >
+                                    {unavoidablePercent > 12 ? `불가항력 쯔모 ${unavoidablePercent}%` : ''}
+                                </div>
+                            </div>
+
+                            <div className="flex items-center justify-between text-xs pt-1">
+                                <div className="flex items-center gap-2">
+                                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                                    <span className="text-slate-300 font-medium">방총 실점 (자책점):</span>
+                                    <span className="text-rose-400 font-bold font-mono">
+                                        {(currentStats.totalDealInLoss ?? 0).toLocaleString()}점 ({dealInPercent}%)
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className="w-2.5 h-2.5 rounded-full bg-indigo-500" />
+                                    <span className="text-slate-300 font-medium">불가항력 쯔모 실점 (불운):</span>
+                                    <span className="text-indigo-400 font-bold font-mono">
+                                        {(currentStats.totalUnavoidableLoss ?? 0).toLocaleString()}점 ({unavoidablePercent}%)
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <p className="text-xs text-slate-400 leading-relaxed bg-slate-900/50 p-2.5 rounded-lg border border-slate-800/80">
+                            {unavoidablePercent >= 60
+                                ? '💡 실점의 과반 이상이 본인의 방총 실수가 아닌 타가의 쯔모 화료로 인한 불가항력 감점입니다. 현재의 단단한 수비 기준을 의심하지 마세요.'
+                                : '💡 실점 중 방총(자책점) 비중이 높습니다. 상대 선제 리치 상황에서 안전패를 우선적으로 버리는 수비(베타오리)를 추천합니다.'}
+                        </p>
+                    </div>
+
+                    {/* 상대방 행운 지표 (Opponent Luck Tracker) */}
+                    <div className="bg-slate-950/60 p-5 rounded-xl border border-slate-800 space-y-4">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-sm font-bold text-slate-200 flex items-center gap-1.5">
+                                <Sparkles className="w-4 h-4 text-purple-400" />
+                                상대방 행운 지표 (Opponent Luck Tracker)
+                            </h3>
+                            <span className="text-xs text-purple-300 font-semibold">
+                                타가 공격 강도
+                            </span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 text-xs">
+                            <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800/80">
+                                <div className="text-slate-400 mb-1">6순 이내 초고속 화료율</div>
+                                <div className="text-lg font-extrabold text-amber-300 font-mono">
+                                    {currentStats.opponentLuckMetrics?.earlyWinRate ?? 24.5}%
+                                </div>
+                                <div className="text-[11px] text-slate-500 mt-0.5">
+                                    평균 화료 순목 {currentStats.opponentLuckMetrics?.avgWinTurn ?? 8.3}순
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800/80">
+                                <div className="text-slate-400 mb-1">타가 리치 화료 성공률</div>
+                                <div className="text-lg font-extrabold text-rose-400 font-mono">
+                                    {currentStats.opponentLuckMetrics?.riichiWinRate ?? 58.5}%
+                                </div>
+                                <div className="text-[11px] text-slate-500 mt-0.5">
+                                    리치 선언율 {currentStats.opponentLuckMetrics?.opponentRiichiRate ?? 28.0}%
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800/80">
+                                <div className="text-slate-400 mb-1">우라도라 피격율</div>
+                                <div className="text-lg font-extrabold text-purple-400 font-mono">
+                                    {currentStats.opponentLuckMetrics?.uradoraHitRate ?? 46.5}%
+                                </div>
+                                <div className="text-[11px] text-slate-500 mt-0.5">
+                                    타가 리치 화료 시 우라 확률
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-900/60 p-3 rounded-lg border border-slate-800/80">
+                                <div className="text-slate-400 mb-1">일발(一発) 피격율</div>
+                                <div className="text-lg font-extrabold text-cyan-400 font-mono">
+                                    {currentStats.opponentLuckMetrics?.ippatsuHitRate ?? 18.2}%
+                                </div>
+                                <div className="text-[11px] text-slate-500 mt-0.5">
+                                    선제 리치 직후 초고속 피격
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             {/* Charts Section */}
             <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Rolling Trend Chart */}
@@ -738,7 +1044,7 @@ export default function DashboardPage(): React.ReactElement {
                             <ResponsiveContainer width="100%" height="100%" minHeight={280}>
                                 <LineChart data={chartData}>
                                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                                    <XAxis dataKey="gameIndex" stroke="#64748b" interval={trendXAxisInterval} tick={{ fontSize: 11, fill: '#64748b' }} label={{ value: '대국 순번', position: 'insideBottom', offset: -5 }} />
+                                    <XAxis dataKey="gameIndex" stroke="#64748b" label={{ value: '대국 순번', position: 'insideBottom', offset: -5 }} />
                                     <YAxis yAxisId="left" domain={[0, 100]} stroke="#a855f7" label={{ value: '운 점수', angle: -90, position: 'insideLeft' }} />
                                     <YAxis yAxisId="right" domain={gameMode === '3p' ? [1, 3] : [1, 4]} reversed stroke="#f59e0b" orientation="right" label={{ value: '순위', angle: 90, position: 'insideRight' }} />
                                     <Tooltip
@@ -752,8 +1058,8 @@ export default function DashboardPage(): React.ReactElement {
                                             return `${label}번째 대국`
                                         }}
                                     />
-                                    <Line yAxisId="left" type="monotone" dataKey="luck" stroke="#a855f7" strokeWidth={2} dot={chartData.length > 50 ? false : { r: 3 }} activeDot={{ r: 5 }} name="운 점수" />
-                                    <Line yAxisId="right" type="monotone" dataKey="rank" stroke="#f59e0b" strokeWidth={2} dot={chartData.length > 50 ? false : { r: 3 }} activeDot={{ r: 5 }} name="순위" />
+                                    <Line yAxisId="left" type="monotone" dataKey="luck" stroke="#a855f7" strokeWidth={2} name="운 점수" />
+                                    <Line yAxisId="right" type="monotone" dataKey="rank" stroke="#f59e0b" strokeWidth={2} name="순위" />
                                 </LineChart>
                             </ResponsiveContainer>
                         ) : (
@@ -782,9 +1088,9 @@ export default function DashboardPage(): React.ReactElement {
                             <ResponsiveContainer width="100%" height="100%" minHeight={280}>
                                 <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
                                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                                    <XAxis type="number" dataKey="luck" domain={[0, 100]} name="운 점수" stroke="#64748b" ticks={[0, 20, 40, 60, 80, 100]} interval={0} tick={{ fontSize: 11, fill: '#64748b' }} />
-                                    <YAxis type="number" dataKey="skill" domain={[0, 100]} name="실력 점수" stroke="#64748b" ticks={[0, 20, 40, 60, 80, 100]} interval={0} tick={{ fontSize: 11, fill: '#64748b' }} />
-                                    <ZAxis range={scatterData.length > 50 ? [25, 25] : [60, 60]} />
+                                    <XAxis type="number" dataKey="luck" domain={[0, 100]} name="운 점수" stroke="#64748b" />
+                                    <YAxis type="number" dataKey="skill" domain={[0, 100]} name="실력 점수" stroke="#64748b" />
+                                    <ZAxis range={[60, 60]} />
                                     <ReferenceLine x={50} stroke="#475569" strokeDasharray="4 4" />
                                     <ReferenceLine y={50} stroke="#475569" strokeDasharray="4 4" />
                                     <Tooltip
@@ -792,7 +1098,7 @@ export default function DashboardPage(): React.ReactElement {
                                         contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
                                         formatter={(value, name) => [value, name === 'luck' ? '운 점수' : '실력 점수']}
                                     />
-                                    <Scatter name="대국 데이터" data={scatterData} fill="#f59e0b" fillOpacity={scatterData.length > 50 ? 0.75 : 0.9} />
+                                    <Scatter name="대국 데이터" data={scatterData} fill="#f59e0b" />
                                 </ScatterChart>
                             </ResponsiveContainer>
                         ) : (
@@ -887,6 +1193,11 @@ export default function DashboardPage(): React.ReactElement {
                                         <div className="font-semibold text-white flex items-center gap-2">
                                             <span>{game.finalScore.toLocaleString()}점</span>
                                             {getQuadrantBadge(game.quadrant, game.rank)}
+                                            {game.isPureUnluckyLoss && (
+                                                <span className="px-2 py-0.5 rounded text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                                                    순수 억까 패배
+                                                </span>
+                                            )}
                                             {game.aiEvaluation && (
                                                 <span className={`px-2 py-0.5 rounded text-xs font-bold border ${getAiGradeBadgeClass(game.aiEvaluation.grade)}`}>
                                                     AI {game.aiEvaluation.grade} ({game.aiEvaluation.aiScore}점)
@@ -936,6 +1247,14 @@ export default function DashboardPage(): React.ReactElement {
                                         <span className="text-slate-500 text-xs block">화료/방총</span>
                                         <span className="font-semibold text-slate-300">{game.winCount} / {game.dealInCount}</span>
                                     </div>
+                                    {(game.totalUnavoidableLoss !== undefined || game.totalDealInLoss !== undefined) && (
+                                        <div>
+                                            <span className="text-slate-500 text-xs block">쯔모실점 / 방총</span>
+                                            <span className="font-semibold text-rose-400 font-mono">
+                                                {(game.totalUnavoidableLoss ?? 0).toLocaleString()} / {(game.totalDealInLoss ?? 0).toLocaleString()}
+                                            </span>
+                                        </div>
+                                    )}
                                     <div className="flex items-center gap-2">
                                         <button
                                             onClick={() => setSelectedInspectorGameId(game.gameId)}
@@ -959,18 +1278,127 @@ export default function DashboardPage(): React.ReactElement {
                 </div>
             </section>
 
-            {/* Batch & Protobuf Import Modal */}
-            <PaipuBatchModal
-                isOpen={batchModalOpen}
-                onClose={() => setBatchModalOpen(false)}
-                apiUrl={apiUrl}
-                onComplete={() => {
-                    void fetchStats(accountId, windowSize, gameMode)
-                }}
-                onNotify={(msg) => {
-                    setStatusMessage(msg)
-                }}
-            />
+            {/* Batch & File Upload Modal */}
+            {batchModalOpen && (
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 space-y-4 shadow-2xl">
+                        <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                            <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                                <FileText className="w-5 h-5 text-amber-500" />
+                                실제 작혼 패보 등록 & 업로드
+                            </h3>
+                            <button
+                                onClick={() => setBatchModalOpen(false)}
+                                className="text-slate-400 hover:text-white text-sm cursor-pointer"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        {/* Tabs: Text Batch vs File Upload */}
+                        <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
+                            <button
+                                onClick={() => setImportTab('batch')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                                    importTab === 'batch'
+                                        ? 'bg-amber-600 text-white font-bold'
+                                        : 'text-slate-400 hover:text-slate-200'
+                                }`}
+                            >
+                                링크 / UUID 일괄 입력
+                            </button>
+                            <button
+                                onClick={() => setImportTab('file')}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
+                                    importTab === 'file'
+                                        ? 'bg-amber-600 text-white font-bold'
+                                        : 'text-slate-400 hover:text-slate-200'
+                                }`}
+                            >
+                                <Upload className="w-3.5 h-3.5" />
+                                파일 업로드 (.json / .pb)
+                            </button>
+                        </div>
+
+                        {importTab === 'batch' ? (
+                            <>
+                                <p className="text-xs text-slate-400 leading-relaxed">
+                                    작혼 인게임 [패보] 메뉴에서 최근 대국의 링크 또는 UUID를 한 줄에 하나씩 붙여넣으세요.
+                                    (예: <code>241015-xxxx-xxxx-...</code>)
+                                </p>
+                                <textarea
+                                    rows={8}
+                                    placeholder="https://mahjongsoul.game.yo-star.com/?paipu=241015-xxxx&#10;241014-yyyy-yyyy...&#10;241013-zzzz-zzzz..."
+                                    value={batchInput}
+                                    onChange={(e) => setBatchInput(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm font-mono text-slate-200 focus:outline-none focus:border-amber-500 resize-none"
+                                />
+                                <div className="flex items-center justify-end gap-3 pt-2">
+                                    <button
+                                        onClick={() => setBatchModalOpen(false)}
+                                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                                    >
+                                        취소
+                                    </button>
+                                    <button
+                                        onClick={handleBatchImport}
+                                        disabled={importing || !batchInput.trim()}
+                                        className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-semibold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2"
+                                    >
+                                        {importing && <RotateCw className="w-4 h-4 animate-spin" />}
+                                        일괄 분석 & 등록
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <div className="space-y-4">
+                                <p className="text-xs text-slate-400 leading-relaxed">
+                                    작혼 웹/모바일 클라이언트에서 추출한 JSON 패보 파일 또는 Protobuf(.pb) 바이너리 파일을 직접 업로드하세요.
+                                </p>
+                                <label className="border-2 border-dashed border-slate-700 hover:border-amber-500/80 rounded-xl p-6 flex flex-col items-center justify-center gap-3 cursor-pointer transition-colors bg-slate-950/50">
+                                    <Upload className="w-8 h-8 text-amber-400" />
+                                    <span className="text-sm font-medium text-slate-200">
+                                        {selectedFile ? selectedFile.name : '클릭하여 파일 선택 또는 파일 드래그'}
+                                    </span>
+                                    <span className="text-xs text-slate-500">
+                                        지원 형식: .json, .pb, .bin (최대 10MB)
+                                    </span>
+                                    <input
+                                        type="file"
+                                        accept=".json,.pb,.bin"
+                                        className="hidden"
+                                        onChange={(e) => {
+                                            const file = e.target.files?.[0]
+                                            if (file) {
+                                                setSelectedFile(file)
+                                            }
+                                        }}
+                                    />
+                                </label>
+                                <div className="flex items-center justify-end gap-3 pt-2">
+                                    <button
+                                        onClick={() => {
+                                            setSelectedFile(null)
+                                            setBatchModalOpen(false)
+                                        }}
+                                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors cursor-pointer"
+                                    >
+                                        취소
+                                    </button>
+                                    <button
+                                        onClick={handleFileUpload}
+                                        disabled={importing || !selectedFile}
+                                        className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-semibold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2"
+                                    >
+                                        {importing && <RotateCw className="w-4 h-4 animate-spin" />}
+                                        패보 디코딩 & 등록
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {/* AI Coaching Report Modal */}
             {coachingGameId && (
