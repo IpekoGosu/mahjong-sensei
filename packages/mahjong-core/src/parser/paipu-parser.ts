@@ -133,11 +133,33 @@ export class PaipuParser {
         // Calculate final scores and ranks
         const defaultScore = playerCount === 3 ? 35000 : 25000
         const lastRound = record.rounds[record.rounds.length - 1]
-        const finalScores = lastRound ? [...lastRound.header.scores] : [defaultScore, defaultScore, defaultScore, defaultScore]
+        const finalScores: number[] = lastRound
+            ? [...lastRound.header.scores]
+            : [defaultScore, defaultScore, defaultScore, defaultScore]
 
-        // Rank determination (tie-breaking by seat order)
-        const validSeats = (playerCount === 3 ? [0, 1, 2] : [0, 1, 2, 3]) as SeatIndex[]
-        const rankedSeats: SeatIndex[] = validSeats.sort((a, b) => {
+        if (lastRound) {
+            for (const action of lastRound.actions) {
+                if (action.type === 'RecordHule') {
+                    for (const h of action.hules) {
+                        if (h.deltaScores) {
+                            for (let i = 0; i < 4; i++) {
+                                finalScores[i] = (finalScores[i] ?? defaultScore) + (h.deltaScores[i] ?? 0)
+                            }
+                        }
+                    }
+                } else if (action.type === 'RecordNoTile') {
+                    if (action.deltaScores) {
+                        for (let i = 0; i < 4; i++) {
+                            finalScores[i] = (finalScores[i] ?? defaultScore) + (action.deltaScores[i] ?? 0)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Rank determination (tie-breaking by seat order: East 0 > South 1 > West 2 > North 3)
+        const validSeats: SeatIndex[] = playerCount === 3 ? [0, 1, 2] : [0, 1, 2, 3]
+        const rankedSeats: SeatIndex[] = [...validSeats].sort((a, b) => {
             const scoreA = finalScores[a] ?? defaultScore
             const scoreB = finalScores[b] ?? defaultScore
             if (scoreB !== scoreA) {
@@ -146,8 +168,13 @@ export class PaipuParser {
             return a - b
         })
 
-        const seatRanks = playerCount === 3 ? [1, 2, 3] : [1, 2, 3, 4]
-        for (let r = 0; r < playerCount; r++) {
+        const seatRanks: Record<SeatIndex, number> = {
+            0: 1,
+            1: 2,
+            2: 3,
+            3: 4
+        }
+        for (let r = 0; r < rankedSeats.length; r++) {
             const seat = rankedSeats[r]
             if (seat !== undefined) {
                 seatRanks[seat] = r + 1
@@ -163,7 +190,7 @@ export class PaipuParser {
                 nickname: p.nickname,
                 seat,
                 rank: seatRanks[seat] ?? (playerCount === 3 ? 3 : 4),
-                finalScore: finalScores[seat] ?? 25000,
+                finalScore: finalScores[seat] ?? defaultScore,
                 luckScore: Number((totalLuck / roundCount).toFixed(1)),
                 skillScore: Number((totalSkill / roundCount).toFixed(1))
             }
