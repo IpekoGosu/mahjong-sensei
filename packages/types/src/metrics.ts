@@ -219,6 +219,9 @@ export interface CriticalMistakeHighlight {
     readonly mistakeCategory: MistakeCategory
     readonly severityScore: number
     readonly coachingMessageKo: string
+    /**
+     * 기대치 손실 추정치 (점수 단위, 예: 2,500점 이상의 치명적 EV 손실 스파이크 감지용)
+     */
     readonly evLoss?: number | undefined
 }
 
