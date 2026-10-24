@@ -117,9 +117,11 @@ export class AiRankEvaluator {
             let kanCount = 0
             let playerMeldCount = 0
             let turnNumber = 0
+            let lastDiscardedTile: string | null = null
 
             for (const action of round.actions) {
                 if (action.type === 'RecordDealTile') {
+                    lastDiscardedTile = null
                     if (action.doras) {
                         for (const d of action.doras) {
                             if (!doraIndicators.includes(d)) {
@@ -134,6 +136,7 @@ export class AiRankEvaluator {
                         turnNumber++
                     }
                 } else if (action.type === 'RecordBaBei') {
+                    lastDiscardedTile = null
                     if (action.doras) {
                         for (const d of action.doras) {
                             if (!doraIndicators.includes(d)) {
@@ -149,25 +152,107 @@ export class AiRankEvaluator {
                         }
                     }
                 } else if (action.type === 'RecordChiPengGang') {
-                    const mCount = opponentMeldCounts.get(action.seat) ?? 0
-                    opponentMeldCounts.set(action.seat, mCount + 1)
                     if (action.seat === targetSeat) {
                         playerMeldCount++
+                    } else {
+                        const mCount = opponentMeldCounts.get(action.seat) ?? 0
+                        opponentMeldCounts.set(action.seat, mCount + 1)
                     }
-                    for (const t of action.tiles) {
-                        this.addVisibleTile(t, visibleTileCounts)
+
+                    if (action.meldType === 'daiminkan') {
+                        kanCount++
                     }
+
+                    let skippedCalled = false
+                    const handTilesToRemove: string[] = []
+
+                    for (const tile of action.tiles) {
+                        if (
+                            !skippedCalled &&
+                            lastDiscardedTile !== null &&
+                            this.normalizeTile(tile) === this.normalizeTile(lastDiscardedTile)
+                        ) {
+                            skippedCalled = true
+                            continue
+                        }
+
+                        if (action.seat !== targetSeat) {
+                            this.addVisibleTile(tile, visibleTileCounts)
+                        } else {
+                            handTilesToRemove.push(tile)
+                        }
+                    }
+
+                    if (action.seat === targetSeat) {
+                        if (!skippedCalled && action.tiles.length > 0) {
+                            let skipIdx = handTilesToRemove.findIndex((t) => {
+                                const norm = this.normalizeTile(t)
+                                return !currentHand.some((h) => this.normalizeTile(h) === norm)
+                            })
+                            if (skipIdx === -1) {
+                                skipIdx = 0
+                            }
+                            handTilesToRemove.splice(skipIdx, 1)
+                        }
+
+                        for (const tile of handTilesToRemove) {
+                            let idx = currentHand.indexOf(tile)
+                            if (idx === -1) {
+                                const norm = this.normalizeTile(tile)
+                                idx = currentHand.findIndex((h) => this.normalizeTile(h) === norm)
+                            }
+                            if (idx !== -1) {
+                                currentHand.splice(idx, 1)
+                            }
+                            this.addVisibleTile(tile, visibleTileCounts)
+                        }
+                    }
+                    lastDiscardedTile = null
                 } else if (action.type === 'RecordAnGangAddGang') {
                     kanCount++
-                    const mCount = opponentMeldCounts.get(action.seat) ?? 0
-                    opponentMeldCounts.set(action.seat, mCount + 1)
-                    if (action.seat === targetSeat) {
-                        playerMeldCount++
+                    if (action.gangType === 'ankan') {
+                        if (action.seat === targetSeat) {
+                            playerMeldCount++
+                            for (const tile of action.tiles) {
+                                let idx = currentHand.indexOf(tile)
+                                if (idx === -1) {
+                                    const norm = this.normalizeTile(tile)
+                                    idx = currentHand.findIndex((h) => this.normalizeTile(h) === norm)
+                                }
+                                if (idx !== -1) {
+                                    currentHand.splice(idx, 1)
+                                }
+                                this.addVisibleTile(tile, visibleTileCounts)
+                            }
+                        } else {
+                            const mCount = opponentMeldCounts.get(action.seat) ?? 0
+                            opponentMeldCounts.set(action.seat, mCount + 1)
+                            for (const tile of action.tiles) {
+                                this.addVisibleTile(tile, visibleTileCounts)
+                            }
+                        }
+                    } else {
+                        // kakan (加槓, AddGang)
+                        const addedTile = action.tiles[0]
+                        if (addedTile) {
+                            if (action.seat === targetSeat) {
+                                let idx = currentHand.indexOf(addedTile)
+                                if (idx === -1) {
+                                    const norm = this.normalizeTile(addedTile)
+                                    idx = currentHand.findIndex((h) => this.normalizeTile(h) === norm)
+                                }
+                                if (idx !== -1) {
+                                    currentHand.splice(idx, 1)
+                                }
+                                this.addVisibleTile(addedTile, visibleTileCounts)
+                            } else {
+                                this.addVisibleTile(addedTile, visibleTileCounts)
+                            }
+                        }
                     }
-                    for (const t of action.tiles) {
-                        this.addVisibleTile(t, visibleTileCounts)
-                    }
+                    lastDiscardedTile = null
                 } else if (action.type === 'RecordDiscardTile') {
+                    lastDiscardedTile = action.tile
                     kawas.get(action.seat)?.push(action.tile)
                     if (action.seat !== targetSeat) {
                         this.addVisibleTile(action.tile, visibleTileCounts)

@@ -3,7 +3,8 @@ import test from 'node:test'
 import assert from 'node:assert'
 import {
     AiRankEvaluator,
-    SummaryGameEvaluationInput
+    SummaryGameEvaluationInput,
+    PaipuGame
 } from './ai-rank-evaluator'
 import { AiGrade } from '@mahjong-sensei/types'
 import { SAMPLE_MAJSOUL_GAME } from '../sample-data/sample-paipu'
@@ -444,4 +445,154 @@ test('MockAiRankEvaluator - Middle tile danger: Nakasuji (0.16) vs Katasuji (0.5
     assert.strictEqual(katasuji6m, 0.55)
     const musuji6m = mock.testCalculateTileDanger('6m', [], emptyMap)
     assert.strictEqual(musuji6m, 1.00)
+})
+
+/*_ GEMINI THINKING _*/
+test('AiRankEvaluator - evaluatePaipuGame: target Chi and Pon meld synchronizes hand and prevents hand tile inflation', () => {
+    const evaluator = new AiRankEvaluator()
+
+    const game: PaipuGame = {
+        uuid: 'test-furo-sync-game',
+        roomType: '옥탁 동풍전 (Jade East)',
+        timestamp: 1722510000000,
+        players: [
+            { accountId: 10001, nickname: 'TargetPlayer', seat: 0, level: 3 },
+            { accountId: 10002, nickname: 'Opponent1', seat: 1, level: 3 },
+            { accountId: 10003, nickname: 'Opponent2', seat: 2, level: 3 },
+            { accountId: 10004, nickname: 'Opponent3', seat: 3, level: 3 }
+        ],
+        rounds: [
+            {
+                header: {
+                    type: 'RecordNewRound',
+                    chang: 0,
+                    ju: 0,
+                    ben: 0,
+                    liqi: 0,
+                    scores: [25000, 25000, 25000, 25000],
+                    dora: '9m',
+                    hands: [
+                        // Seat 0 starting hand: 13 tiles (1m2m3m, 4p5p6p, 7s8s9s, 1z1z, 2z, 3z)
+                        ['1m', '2m', '3m', '4p', '5p', '6p', '7s', '8s', '9s', '1z', '1z', '2z', '3z'],
+                        ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+                        ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+                        ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s']
+                    ]
+                },
+                actions: [
+                    // Opponent Seat 3 discards 1z
+                    { type: 'RecordDealTile', seat: 3, tile: '1z' },
+                    { type: 'RecordDiscardTile', seat: 3, tile: '1z', isMoqie: false, isLiqi: false },
+
+                    // Seat 0 calls Pon on 1z: two 1z removed from hand, currentHand has 11 tiles
+                    { type: 'RecordChiPengGang', seat: 0, meldType: 'pon', tiles: ['1z', '1z', '1z'], fromSeat: 3 },
+
+                    // Seat 0 discards 2z: evaluated on 11 tiles, then removed -> currentHand has 10 tiles
+                    { type: 'RecordDiscardTile', seat: 0, tile: '2z', isMoqie: false, isLiqi: false },
+
+                    // Opponent Seat 1 discards 4m
+                    { type: 'RecordDealTile', seat: 1, tile: '4m' },
+                    { type: 'RecordDiscardTile', seat: 1, tile: '4m', isMoqie: false, isLiqi: false },
+
+                    // Seat 0 calls Chi on 4m with 2m, 3m: two tiles removed -> currentHand has 8 tiles
+                    { type: 'RecordChiPengGang', seat: 0, meldType: 'chi', tiles: ['2m', '3m', '4m'], fromSeat: 1 },
+
+                    // Seat 0 discards 7s: evaluated on 8 tiles, then removed -> currentHand has 7 tiles
+                    { type: 'RecordDiscardTile', seat: 0, tile: '7s', isMoqie: false, isLiqi: false },
+
+                    // Next turn Seat 0 draws 3z: currentHand has 8 tiles (7 + 1 = 8 tiles)
+                    { type: 'RecordDealTile', seat: 0, tile: '3z' },
+
+                    // Seat 0 discards 3z
+                    { type: 'RecordDiscardTile', seat: 0, tile: '3z', isMoqie: false, isLiqi: false },
+
+                    // Hand ends with Tsumo
+                    {
+                        type: 'RecordHule',
+                        hules: [
+                            {
+                                seat: 0,
+                                deltaScores: [3000, -1000, -1000, -1000],
+                                handScore: 3000,
+                                fan: 1,
+                                fu: 30,
+                                yaku: ['역패 백'],
+                                uradoras: []
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+
+    const breakdown = evaluator.evaluatePaipuGame(game, 0)
+    assert.ok(breakdown.matchRate >= 0 && breakdown.matchRate <= 100)
+    assert.ok(breakdown.aiScore >= 0 && breakdown.aiScore <= 100)
+    assert.ok(['S+', 'S', 'A', 'B', 'C', 'D'].includes(breakdown.grade))
+    assert.ok(['S+', 'S', 'A', 'B', 'C', 'D'].includes(breakdown.attackGrade))
+    assert.ok(['S+', 'S', 'A', 'B', 'C', 'D'].includes(breakdown.defenseGrade))
+})
+
+/*_ GEMINI THINKING _*/
+test('AiRankEvaluator - evaluatePaipuGame: RecordAnGangAddGang handles ankan (4 tiles) and kakan (1 tile)', () => {
+    const evaluator = new AiRankEvaluator()
+
+    const game: PaipuGame = {
+        uuid: 'test-gang-sync-game',
+        roomType: '옥탁 동풍전 (Jade East)',
+        timestamp: 1722510000000,
+        players: [
+            { accountId: 10001, nickname: 'TargetPlayer', seat: 0, level: 3 },
+            { accountId: 10002, nickname: 'Opponent1', seat: 1, level: 3 },
+            { accountId: 10003, nickname: 'Opponent2', seat: 2, level: 3 },
+            { accountId: 10004, nickname: 'Opponent3', seat: 3, level: 3 }
+        ],
+        rounds: [
+            {
+                header: {
+                    type: 'RecordNewRound',
+                    chang: 0,
+                    ju: 0,
+                    ben: 0,
+                    liqi: 0,
+                    scores: [25000, 25000, 25000, 25000],
+                    dora: '5p',
+                    hands: [
+                        // Seat 0 starting hand: 13 tiles with four 9s and two 1z
+                        ['1m', '2m', '3m', '4p', '5p', '6p', '7s', '9s', '9s', '9s', '9s', '1z', '1z'],
+                        ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+                        ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s'],
+                        ['1p', '2p', '3p', '4p', '5p', '6p', '7p', '8p', '9p', '1s', '2s', '3s', '4s']
+                    ]
+                },
+                actions: [
+                    // Seat 0 declares AnGang on 9s: 4 tiles removed from hand, meldCount = 1
+                    { type: 'RecordAnGangAddGang', seat: 0, gangType: 'ankan', tiles: ['9s', '9s', '9s', '9s'] },
+
+                    // Rinshan draw: draws 8s (hand has 9 + 1 = 10 tiles)
+                    { type: 'RecordDealTile', seat: 0, tile: '8s' },
+
+                    // Seat 0 discards 7s (hand has 10 - 1 = 9 tiles)
+                    { type: 'RecordDiscardTile', seat: 0, tile: '7s', isMoqie: false, isLiqi: false },
+
+                    // Opponent Seat 2 calls Pon on opponent discard
+                    { type: 'RecordDiscardTile', seat: 1, tile: '2p', isMoqie: false, isLiqi: false },
+                    { type: 'RecordChiPengGang', seat: 2, meldType: 'pon', tiles: ['2p', '2p', '2p'], fromSeat: 1 },
+                    { type: 'RecordDiscardTile', seat: 2, tile: '3p', isMoqie: false, isLiqi: false },
+
+                    // Seat 0 draws 1z
+                    { type: 'RecordDealTile', seat: 0, tile: '1z' },
+                    { type: 'RecordDiscardTile', seat: 0, tile: '1z', isMoqie: false, isLiqi: false },
+
+                    { type: 'RecordNoTile', tenpaiSeats: [0], deltaScores: [3000, -1000, -1000, -1000] }
+                ]
+            }
+        ]
+    }
+
+    const breakdown = evaluator.evaluatePaipuGame(game, 0)
+    assert.ok(breakdown.matchRate >= 0 && breakdown.matchRate <= 100)
+    assert.ok(breakdown.aiScore >= 0 && breakdown.aiScore <= 100)
+    assert.ok(['S+', 'S', 'A', 'B', 'C', 'D'].includes(breakdown.grade))
 })

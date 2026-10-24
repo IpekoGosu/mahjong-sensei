@@ -34,30 +34,115 @@ export class LuckEvaluator {
         // Track hand through round actions
         const currentHand = [...startingHand]
         let currentShanten = startShanten
+        let meldCount = 0
+        let lastDiscardedTile: string | null = null
 
         for (const action of round.actions) {
-            if (action.type === 'RecordDealTile' && action.seat === targetSeat) {
-                drawCount++
-                currentHand.push(action.tile)
-                const newShanten = this.shantenCalc.calculate(currentHand, is3P)
-                // If draw reduced shanten or maintained tenpai
-                if (newShanten < currentShanten) {
-                    effectiveDraws++
+            if (action.type === 'RecordDealTile') {
+                lastDiscardedTile = null
+                if (action.seat === targetSeat) {
+                    drawCount++
+                    currentHand.push(action.tile)
+                    const newShanten = this.shantenCalc.calculate(currentHand, is3P, meldCount)
+                    // If draw reduced shanten or maintained tenpai
+                    if (newShanten < currentShanten) {
+                        effectiveDraws++
+                    }
                 }
-            } else if (action.type === 'RecordDiscardTile' && action.seat === targetSeat) {
-                const idx = currentHand.indexOf(action.tile)
-                if (idx !== -1) {
-                    currentHand.splice(idx, 1)
+            } else if (action.type === 'RecordDiscardTile') {
+                lastDiscardedTile = action.tile
+                if (action.seat === targetSeat) {
+                    let idx = currentHand.indexOf(action.tile)
+                    if (idx === -1) {
+                        const norm = this.normalizeTile(action.tile)
+                        idx = currentHand.findIndex((t) => this.normalizeTile(t) === norm)
+                    }
+                    if (idx !== -1) {
+                        currentHand.splice(idx, 1)
+                    }
+                    currentShanten = this.shantenCalc.calculate(currentHand, is3P, meldCount)
                 }
-                currentShanten = this.shantenCalc.calculate(currentHand, is3P)
-            } else if (action.type === 'RecordBaBei' && action.seat === targetSeat) {
-                const idx = currentHand.indexOf('4z')
-                if (idx !== -1) {
-                    currentHand.splice(idx, 1)
-                    startDoraCount++
+            } else if (action.type === 'RecordChiPengGang') {
+                if (action.seat === targetSeat) {
+                    meldCount++
+                    let skippedCalled = false
+                    const handTilesToRemove: string[] = []
+
+                    for (const tile of action.tiles) {
+                        if (
+                            !skippedCalled &&
+                            lastDiscardedTile !== null &&
+                            this.normalizeTile(tile) === this.normalizeTile(lastDiscardedTile)
+                        ) {
+                            skippedCalled = true
+                            continue
+                        }
+                        handTilesToRemove.push(tile)
+                    }
+
+                    if (!skippedCalled && action.tiles.length > 0) {
+                        let skipIdx = handTilesToRemove.findIndex((t) => {
+                            const norm = this.normalizeTile(t)
+                            return !currentHand.some((h) => this.normalizeTile(h) === norm)
+                        })
+                        if (skipIdx === -1) {
+                            skipIdx = 0
+                        }
+                        handTilesToRemove.splice(skipIdx, 1)
+                    }
+
+                    for (const tile of handTilesToRemove) {
+                        let idx = currentHand.indexOf(tile)
+                        if (idx === -1) {
+                            const norm = this.normalizeTile(tile)
+                            idx = currentHand.findIndex((h) => this.normalizeTile(h) === norm)
+                        }
+                        if (idx !== -1) {
+                            currentHand.splice(idx, 1)
+                        }
+                    }
                 }
-                if (currentHand.length >= 13) {
-                    currentShanten = this.shantenCalc.calculate(currentHand, is3P)
+                lastDiscardedTile = null
+            } else if (action.type === 'RecordAnGangAddGang') {
+                if (action.seat === targetSeat) {
+                    if (action.gangType === 'ankan') {
+                        meldCount++
+                        for (const tile of action.tiles) {
+                            let idx = currentHand.indexOf(tile)
+                            if (idx === -1) {
+                                const norm = this.normalizeTile(tile)
+                                idx = currentHand.findIndex((h) => this.normalizeTile(h) === norm)
+                            }
+                            if (idx !== -1) {
+                                currentHand.splice(idx, 1)
+                            }
+                        }
+                    } else if (action.tiles.length > 0) {
+                        const addedTile = action.tiles[0]
+                        if (addedTile) {
+                            let idx = currentHand.indexOf(addedTile)
+                            if (idx === -1) {
+                                const norm = this.normalizeTile(addedTile)
+                                idx = currentHand.findIndex((h) => this.normalizeTile(h) === norm)
+                            }
+                            if (idx !== -1) {
+                                currentHand.splice(idx, 1)
+                            }
+                        }
+                    }
+                }
+                lastDiscardedTile = null
+            } else if (action.type === 'RecordBaBei') {
+                lastDiscardedTile = null
+                if (action.seat === targetSeat) {
+                    const idx = currentHand.indexOf('4z')
+                    if (idx !== -1) {
+                        currentHand.splice(idx, 1)
+                        startDoraCount++
+                    }
+                    if (currentHand.length >= (13 - meldCount * 3)) {
+                        currentShanten = this.shantenCalc.calculate(currentHand, is3P, meldCount)
+                    }
                 }
             } else if (action.type === 'RecordHule') {
                 for (const h of action.hules) {
@@ -396,5 +481,9 @@ export class LuckEvaluator {
             }
         }
         return payers >= 2
+    }
+
+    protected normalizeTile(tile: string): string {
+        return tile.replace('0m', '5m').replace('0p', '5p').replace('0s', '5s')
     }
 }
