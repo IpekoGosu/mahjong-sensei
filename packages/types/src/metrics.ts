@@ -20,6 +20,39 @@ export interface RoundLuckMetric {
     readonly unavoidableDamage: number
     readonly luckScore: number
     readonly isWin?: boolean
+    readonly totalUnavoidableLoss?: number
+    readonly unavoidableLossRatio?: number
+    readonly dealInDamage?: number
+    readonly dealerManganTsumoCount?: number
+    readonly dealerHanemanTsumoCount?: number
+    readonly isDealerTsumo?: boolean
+}
+
+export type OpponentLuckGrade = 'S' | 'A' | 'B' | 'C' | 'D'
+
+export interface OpponentLuckMetrics {
+    readonly avgTenpaiTurn: number
+    readonly avgWinTurn: number
+    readonly earlyWinRate: number
+    readonly earlyWinCount: number
+    readonly totalOpponentWins: number
+    readonly opponentRiichiRate: number
+    readonly riichiWinRate: number
+    readonly ippatsuHitRate: number
+    readonly uradoraHitRate: number
+    readonly opponentLuckGrade: OpponentLuckGrade
+}
+
+export interface UnavoidableLossSummary {
+    readonly totalUnavoidableLoss: number
+    readonly totalDealInLoss: number
+    readonly totalLoss: number
+    readonly unavoidableLossRatio: number
+    readonly dealerManganTsumoCount: number
+    readonly dealerHanemanTsumoCount: number
+    readonly consecutiveDealerTsumoCount: number
+    readonly maxConsecutiveDealerTsumos: number
+    readonly isPureUnluckyLoss: boolean
 }
 
 export interface RoundSkillMetric {
@@ -56,6 +89,11 @@ export interface GameMetricSummary {
     readonly winCount: number
     readonly roomType?: string
     readonly aiEvaluation?: AiEvaluationBreakdown
+    readonly totalUnavoidableLoss?: number
+    readonly totalDealInLoss?: number
+    readonly unavoidableLossRatio?: number
+    readonly isPureUnluckyLoss?: boolean
+    readonly opponentLuckMetrics?: OpponentLuckMetrics
 }
 
 export interface StyleDiagnosis {
@@ -83,6 +121,20 @@ export interface StyleEvaluationInput {
     readonly averageSkillScore?: number
 }
 
+export type SlumpStatus = 'NORMAL' | 'MILD_SLUMP' | 'SEVERE_HARFUKA' | 'HELL_MODE'
+
+export interface SlumpSeverityResult {
+    readonly percentile: number // 예: 0.6 (상위 0.6% 수준의 불운)
+    readonly occurrenceProbability: number // 2000판 중 우연히 겪을 확률 (0~1)
+    readonly zScore: number // 음수일수록 불운
+    readonly status: SlumpStatus
+    readonly message: string // 한글 안내 문구
+    readonly lastPlacePValue?: number
+    readonly topPlacePValue?: number
+    readonly sampleMean?: number
+    readonly sampleVariance?: number
+}
+
 export interface RollingWindowStats {
     readonly windowSize: RollingWindowSize
     readonly gameMode?: GameMode
@@ -104,6 +156,13 @@ export interface RollingWindowStats {
     readonly initiativeRate?: number
     readonly uradoraRate?: number
     readonly styleDiagnosis?: StyleDiagnosis
+    readonly slumpSeverity?: SlumpSeverityResult
+    readonly totalUnavoidableLoss?: number
+    readonly totalDealInLoss?: number
+    readonly tsumoLossRate?: number
+    readonly opponentLuckGrade?: OpponentLuckGrade
+    readonly pureUnluckyLossCount?: number
+    readonly opponentLuckMetrics?: OpponentLuckMetrics
 }
 
 export type TierKey = 'NOVICE_ADEPT' | 'EXPERT' | 'MASTER' | 'SAINT'
