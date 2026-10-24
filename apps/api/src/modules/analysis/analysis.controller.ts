@@ -2,6 +2,7 @@
 import { Controller, Get, Param, Query, ParseIntPipe, ParseFloatPipe, DefaultValuePipe, Header } from '@nestjs/common'
 import { AnalysisService } from './analysis.service'
 import { TierBenchmarkService, TierComparisonResult } from './tier-benchmark.service'
+import { RollingQueryDto } from './dto/rolling-query.dto'
 import { GameMode, RollingWindowSize, RollingWindowStats, GameCoachingReport } from '@mahjong-sensei/types'
 
 @Controller('analysis')
@@ -14,11 +15,15 @@ export class AnalysisController {
     @Get('rolling')
     public async getRolling(
         @Query('accountId', new DefaultValuePipe(10001), ParseIntPipe) accountId: number,
-        @Query('window', new DefaultValuePipe(10), ParseIntPipe) windowSize: number,
+        @Query('window') windowParam?: string | number,
+        @Query('limit') limitParam?: string | number,
         @Query('mode') mode: GameMode = '3p'
     ): Promise<RollingWindowStats> {
-        const validWindow: RollingWindowSize = (windowSize === 30 || windowSize === 50) ? windowSize : 10
-        const validMode: GameMode = mode === '4p' ? '4p' : '3p'
+        const rawWindow = (windowParam !== undefined && windowParam !== null && windowParam !== '')
+            ? windowParam
+            : limitParam
+        const validWindow: RollingWindowSize = RollingQueryDto.parseWindow(rawWindow)
+        const validMode: GameMode = RollingQueryDto.parseMode(mode)
         return await this.analysisService.getRollingStats(accountId, validWindow, validMode)
     }
 

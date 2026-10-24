@@ -424,6 +424,10 @@ export default function DashboardPage(): React.ReactElement {
         }
     })
 
+    const trendXAxisInterval = chartData.length > 50
+        ? 9
+        : (chartData.length > 20 ? 4 : (chartData.length > 10 ? 2 : 0))
+
     const scatterData = currentStats.games.map((g, idx) => ({
         index: idx + 1,
         luck: g.luckScore,
@@ -602,9 +606,9 @@ export default function DashboardPage(): React.ReactElement {
                     </button>
                 </div>
 
-                {/* Rolling Window (10, 30, 50) */}
+                {/* Rolling Window (10, 30, 50, 100) */}
                 <div className="flex items-center gap-2 bg-slate-900 p-1 rounded-xl border border-slate-800">
-                    {([10, 30, 50] as const).map((size) => (
+                    {([10, 30, 50, 100] as const).map((size) => (
                         <button
                             key={size}
                             onClick={() => setWindowSize(size)}
@@ -694,7 +698,7 @@ export default function DashboardPage(): React.ReactElement {
                             <ResponsiveContainer width="100%" height="100%" minHeight={280}>
                                 <LineChart data={chartData}>
                                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                                    <XAxis dataKey="gameIndex" stroke="#64748b" label={{ value: '대국 순번', position: 'insideBottom', offset: -5 }} />
+                                    <XAxis dataKey="gameIndex" stroke="#64748b" interval={trendXAxisInterval} tick={{ fontSize: 11, fill: '#64748b' }} label={{ value: '대국 순번', position: 'insideBottom', offset: -5 }} />
                                     <YAxis yAxisId="left" domain={[0, 100]} stroke="#a855f7" label={{ value: '운 점수', angle: -90, position: 'insideLeft' }} />
                                     <YAxis yAxisId="right" domain={gameMode === '3p' ? [1, 3] : [1, 4]} reversed stroke="#f59e0b" orientation="right" label={{ value: '순위', angle: 90, position: 'insideRight' }} />
                                     <Tooltip
@@ -708,8 +712,8 @@ export default function DashboardPage(): React.ReactElement {
                                             return `${label}번째 대국`
                                         }}
                                     />
-                                    <Line yAxisId="left" type="monotone" dataKey="luck" stroke="#a855f7" strokeWidth={2} name="운 점수" />
-                                    <Line yAxisId="right" type="monotone" dataKey="rank" stroke="#f59e0b" strokeWidth={2} name="순위" />
+                                    <Line yAxisId="left" type="monotone" dataKey="luck" stroke="#a855f7" strokeWidth={2} dot={chartData.length > 50 ? false : { r: 3 }} activeDot={{ r: 5 }} name="운 점수" />
+                                    <Line yAxisId="right" type="monotone" dataKey="rank" stroke="#f59e0b" strokeWidth={2} dot={chartData.length > 50 ? false : { r: 3 }} activeDot={{ r: 5 }} name="순위" />
                                 </LineChart>
                             </ResponsiveContainer>
                         ) : (
@@ -738,9 +742,9 @@ export default function DashboardPage(): React.ReactElement {
                             <ResponsiveContainer width="100%" height="100%" minHeight={280}>
                                 <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
                                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                                    <XAxis type="number" dataKey="luck" domain={[0, 100]} name="운 점수" stroke="#64748b" />
-                                    <YAxis type="number" dataKey="skill" domain={[0, 100]} name="실력 점수" stroke="#64748b" />
-                                    <ZAxis range={[60, 60]} />
+                                    <XAxis type="number" dataKey="luck" domain={[0, 100]} name="운 점수" stroke="#64748b" ticks={[0, 20, 40, 60, 80, 100]} interval={0} tick={{ fontSize: 11, fill: '#64748b' }} />
+                                    <YAxis type="number" dataKey="skill" domain={[0, 100]} name="실력 점수" stroke="#64748b" ticks={[0, 20, 40, 60, 80, 100]} interval={0} tick={{ fontSize: 11, fill: '#64748b' }} />
+                                    <ZAxis range={scatterData.length > 50 ? [25, 25] : [60, 60]} />
                                     <ReferenceLine x={50} stroke="#475569" strokeDasharray="4 4" />
                                     <ReferenceLine y={50} stroke="#475569" strokeDasharray="4 4" />
                                     <Tooltip
@@ -748,7 +752,7 @@ export default function DashboardPage(): React.ReactElement {
                                         contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px' }}
                                         formatter={(value, name) => [value, name === 'luck' ? '운 점수' : '실력 점수']}
                                     />
-                                    <Scatter name="대국 데이터" data={scatterData} fill="#f59e0b" />
+                                    <Scatter name="대국 데이터" data={scatterData} fill="#f59e0b" fillOpacity={scatterData.length > 50 ? 0.75 : 0.9} />
                                 </ScatterChart>
                             </ResponsiveContainer>
                         ) : (

@@ -2,7 +2,7 @@ import { SeatIndex } from './paipu'
 
 export type GameMode = '4p' | '3p'
 
-export type RollingWindowSize = 10 | 30 | 50
+export type RollingWindowSize = 10 | 30 | 50 | 100
 
 export type PerformanceQuadrant =
     | 'SKILLFUL_WIN' // 1사분면: 실력 좋음 + 운 좋음
