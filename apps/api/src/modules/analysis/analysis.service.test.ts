@@ -401,6 +401,69 @@ test('AnalysisService - getCoachingReport generates synthetic coaching report fo
     assert.strictEqual(report.criticalMistakes[1]?.mistakeCategory, 'UKEIRE_LOSS')
     assert.ok(report.overallSummaryKo.includes('실력 점수가 난조'))
     assert.ok(report.actionableAdviceKo.length > 0)
+    assert.ok(report.situationScore !== undefined)
+})
+
+/*_ GEMINI THINKING _*/
+test('AnalysisService - getCoachingReport handles 3P Orasu 2nd defense failure in synthetic report', async () => {
+    const service = new MockAnalysisService()
+    service.mockGame = {
+        id: 'synthetic-3p-orasu-game',
+        roomType: '작혼 3인 남풍전 옥탁',
+        rawProtobuf: null,
+        participants: [
+            {
+                seat: 1,
+                finalScore: 22000,
+                finalRank: 3, // Dropped to 3rd (last)
+                luckScore: 40.0,
+                skillScore: 45.0,
+                player: { accountId: 10002, nickname: '삼마도사' }
+            }
+        ],
+        rounds: [
+            {
+                id: 'round-1',
+                roundIndex: 0,
+                roundMetrics: [
+                    {
+                        seat: 1,
+                        startShanten: 2.0,
+                        dealInScore: 0,
+                        tileEfficiency: 0.90,
+                        luckScore: 50,
+                        skillScore: 60,
+                        isWin: false,
+                        isRiichi: false
+                    }
+                ]
+            },
+            {
+                id: 'round-last',
+                roundIndex: 5, // South 3 (Orasu in 3P Hanchan)
+                roundMetrics: [
+                    {
+                        seat: 1,
+                        startShanten: 1.0,
+                        dealInScore: 8000, // Dealt in on final round
+                        tileEfficiency: 0.70,
+                        luckScore: 30,
+                        skillScore: 30,
+                        isWin: false,
+                        isRiichi: false
+                    }
+                ]
+            }
+        ]
+    }
+
+    const report = await service.getCoachingReport('synthetic-3p-orasu-game', 10002)
+    assert.strictEqual(report.is3P, true)
+    assert.strictEqual(report.targetSeat, 1)
+    assert.ok(report.situationScore !== undefined)
+    assert.ok(report.situationScore <= 40)
+    assert.strictEqual(report.orasuEvaluation?.droppedFrom2ndTo3rd, true)
+    assert.ok(report.actionableAdviceKo.some((advice) => advice.includes('3위(라스) 방어가 최우선')))
 })
 
 test('AnalysisService - getCoachingReport reflects DANGER_PUSH_LOW_EV and tiltDiagnosis in 3P', async () => {
@@ -564,6 +627,184 @@ test('AnalysisService - Multilingual 3P vs 4P room filtering in getRollingStats'
     assert.strictEqual(stats4p.totalGames, 1)
     assert.strictEqual(stats4p.lastPlaceRate, 0.0) // rank 3 is not last place in 4P
     assert.ok(service.lastGameFilter?.AND !== undefined)
+})
+
+test('AnalysisService - Unavoidable Tsumo Loss, PURE_UNLUCKY_LOSS flag and Opponent Luck Metrics', async () => {
+    const service = new MockAnalysisService()
+
+    // Game 1: Rank 3 (last place in 3P), 0 deal-ins, 12,000 unavoidable tsumo loss -> PURE_UNLUCKY_LOSS!
+    // Game 2: Rank 1, 0 deal-ins, 0 tsumo loss
+    // Game 3: Rank 3, 2000 deal-in, 10,000 tsumo loss (10000 / 12000 = 83.3% >= 80%) -> PURE_UNLUCKY_LOSS!
+    const mockGames: ParticipantWithGameRounds[] = [
+        {
+            id: 'p-1',
+            gameId: 'game-unlucky-1',
+            playerId: 'player-1',
+            seat: 0 as SeatIndex,
+            finalScore: 13000,
+            finalRank: 3, // last place
+            luckScore: 25,
+            skillScore: 70,
+            game: {
+                id: 'game-unlucky-1',
+                roomType: '3인 옥탁 동풍전',
+                gameDate: new Date(1720000000000),
+                rounds: [
+                    {
+                        id: 'r-1',
+                        roundIndex: 0,
+                        roundMetrics: [
+                            {
+                                seat: 0 as SeatIndex,
+                                startShanten: 2.0,
+                                startDoraCount: 1,
+                                drawLuckRatio: 0.3,
+                                uradoraHits: 0,
+                                dealInScore: 0, // 0 deal in!
+                                tsumoLossScore: 12000, // 12000 tsumo damage!
+                                tileEfficiency: 0.9,
+                                luckScore: 25,
+                                skillScore: 70,
+                                isWin: false,
+                                isRiichi: false,
+                                isFuro: false,
+                                isDamaten: false,
+                                isInitiative: false
+                            },
+                            {
+                                seat: 1 as SeatIndex, // Opponent dealer
+                                startShanten: 1.0,
+                                startDoraCount: 3,
+                                drawLuckRatio: 0.5,
+                                uradoraHits: 2,
+                                dealInScore: 0,
+                                tsumoLossScore: 0,
+                                tileEfficiency: 0.8,
+                                luckScore: 80,
+                                skillScore: 60,
+                                isWin: true,
+                                isRiichi: true,
+                                isFuro: false,
+                                isDamaten: false,
+                                isInitiative: true
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            id: 'p-2',
+            gameId: 'game-win-2',
+            playerId: 'player-1',
+            seat: 0 as SeatIndex,
+            finalScore: 45000,
+            finalRank: 1,
+            luckScore: 75,
+            skillScore: 65,
+            game: {
+                id: 'game-win-2',
+                roomType: '3인 옥탁 동풍전',
+                gameDate: new Date(1720000000000 + 3600000),
+                rounds: [
+                    {
+                        id: 'r-2',
+                        roundIndex: 0,
+                        roundMetrics: [
+                            {
+                                seat: 0 as SeatIndex,
+                                startShanten: 2.0,
+                                startDoraCount: 2,
+                                drawLuckRatio: 0.4,
+                                uradoraHits: 1,
+                                dealInScore: 0,
+                                tsumoLossScore: 1000, // 1st place player suffered 1000 tsumo loss (unavoidable ratio = 100%), but must NOT be pure unlucky loss!
+                                tileEfficiency: 0.88,
+                                luckScore: 75,
+                                skillScore: 65,
+                                isWin: true,
+                                isRiichi: true,
+                                isFuro: false,
+                                isDamaten: false,
+                                isInitiative: true
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            id: 'p-3',
+            gameId: 'game-unlucky-3',
+            playerId: 'player-1',
+            seat: 0 as SeatIndex,
+            finalScore: 16000,
+            finalRank: 3, // last place
+            luckScore: 30,
+            skillScore: 55,
+            game: {
+                id: 'game-unlucky-3',
+                roomType: '3인 옥탁 동풍전',
+                gameDate: new Date(1720000000000 + 7200000),
+                rounds: [
+                    {
+                        id: 'r-3',
+                        roundIndex: 0,
+                        roundMetrics: [
+                            {
+                                seat: 0 as SeatIndex,
+                                startShanten: 3.0,
+                                startDoraCount: 0,
+                                drawLuckRatio: 0.25,
+                                uradoraHits: 0,
+                                dealInScore: 2000,
+                                tsumoLossScore: 10000, // 10000 / 12000 = 83.3% unavoidable!
+                                tileEfficiency: 0.8,
+                                luckScore: 30,
+                                skillScore: 55,
+                                isWin: false,
+                                isRiichi: false,
+                                isFuro: false,
+                                isDamaten: false,
+                                isInitiative: false
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    ]
+
+    service.mockParticipants = mockGames
+    const stats = await service.getRollingStats(10001, 10, '3p')
+
+    assert.strictEqual(stats.totalGames, 3)
+    assert.strictEqual(stats.totalUnavoidableLoss, 23000) // 12000 + 1000 + 10000
+    assert.strictEqual(stats.totalDealInLoss, 2000)
+    assert.strictEqual(stats.pureUnluckyLossCount, 2) // Both rank 3 games were pure unlucky losses
+    // Tsumo loss rate = 23000 / 25000 * 100 = 92.0%
+    assert.strictEqual(stats.tsumoLossRate, 92.0)
+
+    assert.ok(stats.opponentLuckGrade !== undefined)
+    assert.ok(stats.opponentLuckMetrics !== undefined)
+
+    // Check individual games
+    const game1 = stats.games.find(g => g.gameId === 'game-unlucky-1')
+    assert.ok(game1 !== undefined)
+    assert.strictEqual(game1.totalUnavoidableLoss, 12000)
+    assert.strictEqual(game1.totalDealInLoss, 0)
+    assert.strictEqual(game1.isPureUnluckyLoss, true)
+
+    // 1st place game MUST NOT have isPureUnluckyLoss even with 100% unavoidable loss!
+    const game2 = stats.games.find(g => g.gameId === 'game-win-2')
+    assert.ok(game2 !== undefined)
+    assert.strictEqual(game2.totalUnavoidableLoss, 1000)
+    assert.strictEqual(game2.unavoidableLossRatio, 1.0)
+    assert.strictEqual(game2.isPureUnluckyLoss, false)
+
+    const game3 = stats.games.find(g => g.gameId === 'game-unlucky-3')
+    assert.ok(game3 !== undefined)
+    assert.strictEqual(game3.isPureUnluckyLoss, true)
 })
 
 

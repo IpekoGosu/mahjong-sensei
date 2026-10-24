@@ -6,9 +6,14 @@ import { PaipuService, GameWithDetailRelations } from './paipu.service'
 import { PrismaService } from '../../prisma/prisma.service'
 import { ImportPaipuDto, ImportPaipuPipe } from './dto/import-paipu.dto'
 import { ImportBatchPaipuDto, ImportBatchPaipuPipe } from './dto/import-batch-paipu.dto'
+import { ImportBatchAsyncDto, ImportBatchAsyncPipe } from './dto/import-batch-async.dto'
 import { UploadPaipuDto, UploadPaipuPipe } from './dto/upload-paipu.dto'
-import { SAMPLE_MAJSOUL_GAME, LiqiBinaryDecoder } from '@mahjong-sensei/mahjong-core'
-import { BatchImportPaipuResult } from '@mahjong-sensei/types'
+import { SAMPLE_MAJSOUL_GAME, LiqiBinaryDecoder, MajsoulGameRecord, PaipuParser } from '@mahjong-sensei/mahjong-core'
+import {
+    BatchImportPaipuResult,
+    BatchPaipuJobStatus,
+    BatchAsyncImportResponse
+} from '@mahjong-sensei/types'
 
 class MockPrismaService extends PrismaService {
     public constructor() {
@@ -58,6 +63,26 @@ class MockPaipuService extends PaipuService {
             existing: 0,
             failed: 0,
             gameIds: inputs
+        }
+    }
+
+    public override async startBatchAsync(urls: readonly string[]): Promise<BatchAsyncImportResponse> {
+        return {
+            jobId: 'mock-async-job-123',
+            total: urls.length
+        }
+    }
+
+    public override getBatchStatus(jobId: string): BatchPaipuJobStatus {
+        return {
+            jobId,
+            total: 3,
+            completed: 2,
+            failed: 1,
+            progressPercent: 100,
+            isFinished: true,
+            errors: ['Mock error'],
+            gameIds: ['uuid-1', 'uuid-2']
         }
     }
 }
@@ -218,6 +243,33 @@ test('PaipuController - controller level validation', async () => {
     const fastPathBatchRes = await controller.importBatch(preValidatedBatchDto)
     assert.strictEqual(fastPathBatchRes.total, 1)
     assert.strictEqual(fastPathBatchRes.gameIds[0], 'batch-uuid-fast-path')
+
+    // Controller batch-async validation
+    await assert.rejects(
+        async () => await controller.importBatchAsync({ urls: [] }),
+        BadRequestException
+    )
+    await assert.rejects(
+        async () => await controller.importBatchAsync({ urls: [''] }),
+        BadRequestException
+    )
+
+    const asyncRes = await controller.importBatchAsync({ urls: ['  https://game.maj-soul.com/1/?paipu=async-uuid-1  '] })
+    assert.strictEqual(asyncRes.jobId, 'mock-async-job-123')
+    assert.strictEqual(asyncRes.total, 1)
+
+    // Fast-path when controller receives already-instantiated ImportBatchAsyncDto
+    const preValidatedAsyncDto = new ImportBatchAsyncDto(['https://game.maj-soul.com/1/?paipu=fast-path'])
+    const fastPathAsyncRes = await controller.importBatchAsync(preValidatedAsyncDto)
+    assert.strictEqual(fastPathAsyncRes.jobId, 'mock-async-job-123')
+    assert.strictEqual(fastPathAsyncRes.total, 1)
+
+    // Controller batch-status retrieval
+    const statusRes = controller.getBatchStatus('mock-async-job-123')
+    assert.strictEqual(statusRes.jobId, 'mock-async-job-123')
+    assert.strictEqual(statusRes.total, 3)
+    assert.strictEqual(statusRes.completed, 2)
+    assert.strictEqual(statusRes.isFinished, true)
 
     // Controller upload validation via UploadPaipuPipe
     const uploadPipe = new UploadPaipuPipe()
@@ -524,4 +576,263 @@ test('PaipuService - importBatch deduplicates inputs and categorizes new, existi
     assert.deepStrictEqual(result.gameIds, ['new-game-1', 'existing-game-uuid', 'new-game-2'])
     assert.deepStrictEqual(service.importedGameIds, ['new-game-1', 'new-game-2'])
 })
+
+test('ImportBatchAsyncDto - runtime validation', () => {
+    /*_ GEMINI THINKING _*/
+    // Should reject non-object or null/undefined
+    assert.throws(() => ImportBatchAsyncDto.validate(null), BadRequestException)
+    assert.throws(() => ImportBatchAsyncDto.validate(undefined), BadRequestException)
+    assert.throws(() => ImportBatchAsyncDto.validate('invalid-string'), BadRequestException)
+    assert.throws(() => ImportBatchAsyncDto.validate([]), BadRequestException)
+
+    // Should reject missing urls and missing inputs
+    assert.throws(() => ImportBatchAsyncDto.validate({}), BadRequestException)
+
+    // Should reject non-array urls
+    assert.throws(() => ImportBatchAsyncDto.validate({ urls: 'not-an-array' }), BadRequestException)
+    assert.throws(() => ImportBatchAsyncDto.validate({ urls: 123 }), BadRequestException)
+
+    // Should reject empty array (< 1 item)
+    assert.throws(() => ImportBatchAsyncDto.validate({ urls: [] }), BadRequestException)
+
+    // Should reject array exceeding 100 items
+    const tooManyUrls = Array.from({ length: 101 }, (_, i) => `https://game.maj-soul.com/1/?paipu=test-${i}`)
+    assert.throws(() => ImportBatchAsyncDto.validate({ urls: tooManyUrls }), BadRequestException)
+
+    // Should reject non-string items or empty trimmed items
+    assert.throws(() => ImportBatchAsyncDto.validate({ urls: [123] }), BadRequestException)
+    assert.throws(() => ImportBatchAsyncDto.validate({ urls: [''] }), BadRequestException)
+    assert.throws(() => ImportBatchAsyncDto.validate({ urls: ['   '] }), BadRequestException)
+
+    // Should reject item exceeding 500 characters
+    const tooLongUrl = 'https://game.maj-soul.com/1/?paipu=' + 'x'.repeat(501)
+    assert.throws(() => ImportBatchAsyncDto.validate({ urls: [tooLongUrl] }), BadRequestException)
+
+    // Should accept valid urls and trim each item
+    const valid = ImportBatchAsyncDto.validate({
+        urls: [
+            '  https://game.maj-soul.com/1/?paipu=uuid-1  ',
+            'https://game.maj-soul.com/1/?paipu=uuid-2'
+        ]
+    })
+    assert.strictEqual(valid.urls.length, 2)
+    assert.strictEqual(valid.urls[0], 'https://game.maj-soul.com/1/?paipu=uuid-1')
+    assert.strictEqual(valid.urls[1], 'https://game.maj-soul.com/1/?paipu=uuid-2')
+
+    // Should accept inputs as fallback alias
+    const fallback = ImportBatchAsyncDto.validate({
+        inputs: ['https://game.maj-soul.com/1/?paipu=uuid-fallback']
+    })
+    assert.strictEqual(fallback.urls.length, 1)
+    assert.strictEqual(fallback.urls[0], 'https://game.maj-soul.com/1/?paipu=uuid-fallback')
+
+    // Fast path when already instantiated
+    const alreadyDto = new ImportBatchAsyncDto(['uuid-direct'])
+    assert.strictEqual(ImportBatchAsyncDto.validate(alreadyDto), alreadyDto)
+
+    // Pipe validation
+    const pipe = new ImportBatchAsyncPipe()
+    const piped = pipe.transform({ urls: ['uuid-pipe'] })
+    assert.strictEqual(piped.urls[0], 'uuid-pipe')
+})
+
+class MockAsyncBatchService extends PaipuService {
+    public readonly processedUuids: string[] = []
+
+    public constructor() {
+        super(new MockPrismaService())
+    }
+
+    protected override readonly rateLimitDelayMs: number = 0
+
+    protected override async delay(_ms: number): Promise<void> {
+        return
+    }
+
+    public override async importPaipu(urlOrUuid: string): Promise<{ success: boolean; gameId: string }> {
+        const uuid = this.extractUuid(urlOrUuid)
+        if (uuid.includes('fail-import')) {
+            throw new Error(`Intentional test import error for ${uuid}`)
+        }
+        this.processedUuids.push(uuid)
+        return { success: true, gameId: uuid }
+    }
+
+    public async waitForJob(jobId: string, timeoutMs: number = 2000): Promise<BatchPaipuJobStatus> {
+        const start = Date.now()
+        while (Date.now() - start < timeoutMs) {
+            const status = this.getBatchStatus(jobId)
+            if (status.isFinished) {
+                return status
+            }
+            await new Promise((resolve) => setTimeout(resolve, 10))
+        }
+        return this.getBatchStatus(jobId)
+    }
+}
+
+test('PaipuService - startBatchAsync processes queue, handles deduplication, failures and status polling', async () => {
+    /*_ GEMINI THINKING _*/
+    const service = new MockAsyncBatchService()
+
+    const inputUrls = [
+        'https://game.maj-soul.com/1/?paipu=async-game-1',
+        'async-game-1', // duplicate in batch
+        'https://game.maj-soul.com/1/?paipu=fail-import-1', // failing item
+        '   ' // blank item
+    ]
+
+    const init = await service.startBatchAsync(inputUrls)
+    assert.ok(init.jobId.startsWith('job_'))
+    assert.strictEqual(init.total, 4)
+
+    // Poll until completion
+    const finalStatus = await service.waitForJob(init.jobId)
+
+    assert.strictEqual(finalStatus.jobId, init.jobId)
+    assert.strictEqual(finalStatus.total, 4)
+    assert.strictEqual(finalStatus.completed, 2) // 1 successful + 1 duplicate
+    assert.strictEqual(finalStatus.failed, 2) // 1 error + 1 blank
+    assert.strictEqual(finalStatus.progressPercent, 100)
+    assert.strictEqual(finalStatus.isFinished, true)
+    assert.strictEqual(finalStatus.errors.length, 2)
+    assert.ok(finalStatus.errors.some((e) => e.includes('fail-import-1')))
+    assert.ok(finalStatus.errors.some((e) => e.includes('빈 입력값')))
+    assert.deepStrictEqual(finalStatus.gameIds, ['async-game-1'])
+
+    // getBatchStatus throws NotFoundException for invalid jobId
+    assert.throws(
+        () => service.getBatchStatus('invalid-non-existent-job-id'),
+        NotFoundException
+    )
+})
+
+class MockFatalBatchService extends PaipuService {
+    public constructor() {
+        super(new MockPrismaService())
+    }
+
+    protected override readonly rateLimitDelayMs: number = 0
+
+    protected override async delay(_ms: number): Promise<void> {
+        throw new Error('Fatal unexpected loop failure')
+    }
+
+    public testCleanupOldJobs(): void {
+        this.cleanupOldJobs()
+    }
+
+    public addMockJob(jobId: string, isFinished: boolean, createdAt: number): void {
+        this.batchJobs.set(jobId, {
+            jobId,
+            total: 1,
+            completed: isFinished ? 1 : 0,
+            failed: 0,
+            isFinished,
+            errors: [],
+            gameIds: [],
+            createdAt
+        })
+    }
+
+    public hasJob(jobId: string): boolean {
+        return this.batchJobs.has(jobId)
+    }
+
+    public getJobCount(): number {
+        return this.batchJobs.size
+    }
+}
+
+test('PaipuService - processBatchJob guarantees isFinished=true on fatal error and cleanupOldJobs preserves active jobs', async () => {
+    /*_ GEMINI THINKING _*/
+    const service = new MockFatalBatchService()
+
+    // 1. Test fatal error in processBatchJob guarantees isFinished = true
+    const init = await service.startBatchAsync(['https://game.maj-soul.com/1/?paipu=fatal-1'])
+    // Wait for the async processBatchJob to finish
+    let attempts = 0
+    let status = service.getBatchStatus(init.jobId)
+    while (!status.isFinished && attempts < 20) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        status = service.getBatchStatus(init.jobId)
+        attempts++
+    }
+    assert.strictEqual(status.isFinished, true)
+
+    // 2. Test cleanupOldJobs with > 200 jobs preserves active jobs (!isFinished)
+    const activeJobId = 'active-important-job'
+    service.addMockJob(activeJobId, false, Date.now()) // In-flight active job
+
+    // Add 210 finished jobs
+    for (let i = 0; i < 210; i++) {
+        service.addMockJob(`finished-job-${i}`, true, Date.now())
+    }
+
+    assert.ok(service.getJobCount() > 200)
+    service.testCleanupOldJobs()
+
+    // Active job MUST still be preserved!
+    assert.strictEqual(service.hasJob(activeJobId), true)
+    assert.ok(service.getJobCount() <= 201)
+})
+
+
+class MockProtobufPipelineService extends PaipuService {
+    public capturedRecord: MajsoulGameRecord | null = null
+    public capturedEncodedProto: Uint8Array | null = null
+    private readonly mockBuffer: Uint8Array
+
+    public constructor(protoBuffer: Uint8Array) {
+        super(new MockPrismaService())
+        this.mockBuffer = protoBuffer
+    }
+
+    protected override async findExistingGame(_uuid: string): Promise<{ id: string } | null> {
+        return null
+    }
+
+    protected override async fetchPaipuProtobuf(_uuid: string): Promise<Uint8Array | null> {
+        return this.mockBuffer
+    }
+
+    public override async saveGameRecord(gameRecord: MajsoulGameRecord): Promise<{ success: boolean; gameId: string }> {
+        this.capturedRecord = gameRecord
+        this.capturedEncodedProto = new LiqiBinaryDecoder().encode(gameRecord)
+        return { success: true, gameId: gameRecord.uuid }
+    }
+}
+
+test('PaipuService - Protobuf decoder integration and RoundMetric rich indicator decoding', async () => {
+    /*_ GEMINI THINKING _*/
+    const decoder = new LiqiBinaryDecoder()
+    const encodedProto = decoder.encode(SAMPLE_MAJSOUL_GAME)
+
+    const service = new MockProtobufPipelineService(encodedProto)
+    const result = await service.importPaipu('https://game.maj-soul.com/1/?paipu=' + SAMPLE_MAJSOUL_GAME.uuid)
+
+    assert.strictEqual(result.success, true)
+    assert.strictEqual(result.gameId, SAMPLE_MAJSOUL_GAME.uuid)
+    assert.ok(service.capturedRecord !== null)
+    assert.strictEqual(service.capturedRecord.uuid, SAMPLE_MAJSOUL_GAME.uuid)
+    assert.strictEqual(service.capturedRecord.rounds.length, 2)
+    assert.ok(service.capturedEncodedProto !== null)
+    assert.ok(service.capturedEncodedProto.length > 0)
+
+    // Verify round metrics rich extraction from the decoded game record
+    const parser = new PaipuParser()
+    const parsed = parser.parseGameRecord(service.capturedRecord)
+    assert.strictEqual(parsed.detail.rounds.length, 2)
+    assert.ok(parsed.roundMetrics.length > 0)
+
+    // Check that roundMetrics has isWin, isRiichi, isFuro, isDamaten, isInitiative flags
+    const firstMetric = parsed.roundMetrics[0]
+    assert.ok(firstMetric !== undefined)
+    assert.strictEqual(typeof firstMetric.isWin, 'boolean')
+    assert.strictEqual(typeof firstMetric.isRiichi, 'boolean')
+    assert.strictEqual(typeof firstMetric.isFuro, 'boolean')
+    assert.strictEqual(typeof firstMetric.isDamaten, 'boolean')
+    assert.strictEqual(typeof firstMetric.isInitiative, 'boolean')
+})
+
 

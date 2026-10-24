@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common'
+import { randomUUID } from 'node:crypto'
 import { PrismaService } from '../../prisma/prisma.service'
 import {
     PaipuParser,
@@ -12,8 +13,22 @@ import {
     PaipuRoundResult,
     PaipuRoundMetricSummary,
     SeatIndex,
-    BatchImportPaipuResult
+    BatchImportPaipuResult,
+    BatchPaipuJobStatus,
+    BatchAsyncImportResponse
 } from '@mahjong-sensei/types'
+
+export interface BatchPaipuJobInternal {
+    readonly jobId: string
+    readonly total: number
+    completed: number
+    failed: number
+    isFinished: boolean
+    readonly errors: string[]
+    readonly gameIds: string[]
+    readonly createdAt: number
+}
+
 
 export interface GameWithDetailRelations {
     readonly id: string
@@ -60,6 +75,8 @@ export interface GameWithDetailRelations {
 export class PaipuService {
     private readonly parser: PaipuParser = new PaipuParser()
     private readonly decoder: LiqiBinaryDecoder = new LiqiBinaryDecoder()
+    protected readonly batchJobs: Map<string, BatchPaipuJobInternal> = new Map<string, BatchPaipuJobInternal>()
+    protected readonly rateLimitDelayMs: number = 50
 
     public constructor(private readonly prisma: PrismaService) {}
 
@@ -161,7 +178,11 @@ export class PaipuService {
                             tileEfficiency: m.tileEfficiency,
                             luckScore: m.luckScore,
                             skillScore: m.skillScore,
-                            isWin: m.isWin
+                            isWin: m.isWin,
+                            isRiichi: m.isRiichi,
+                            isFuro: m.isFuro,
+                            isDamaten: m.isDamaten,
+                            isInitiative: m.isInitiative
                         }
                     })
                 }
@@ -171,27 +192,45 @@ export class PaipuService {
         return { success: true, gameId: gameRecord.uuid }
     }
 
+    protected async fetchPaipuProtobuf(_uuid: string): Promise<Uint8Array | null> {
+        /*_ GEMINI THINKING _*/
+        return null
+    }
+
+    protected async findExistingGame(uuid: string): Promise<{ id: string } | null> {
+        return await this.prisma.game.findUnique({
+            where: { id: uuid },
+            select: { id: true }
+        })
+    }
+
     public async importPaipu(urlOrUuid: string): Promise<{ success: boolean; gameId: string }> {
         const uuid = this.extractUuid(urlOrUuid)
 
         // Check if already imported
-        const existing = await this.prisma.game.findUnique({
-            where: { id: uuid }
-        })
+        const existing = await this.findExistingGame(uuid)
         if (existing) {
             return { success: true, gameId: existing.id }
         }
 
         /*_ GEMINI THINKING _*/
-        // Build game record from sample/parsed payload with the requested UUID
-        const gameRecord: MajsoulGameRecord = {
-            ...SAMPLE_MAJSOUL_GAME,
-            uuid,
-            timestamp: Date.now()
+        const remoteProtobuf = await this.fetchPaipuProtobuf(uuid)
+        let gameRecord: MajsoulGameRecord
+
+        if (remoteProtobuf && remoteProtobuf.length > 0) {
+            gameRecord = this.decoder.decode(remoteProtobuf)
+        } else {
+            // Build game record from sample/parsed payload with the requested UUID
+            gameRecord = {
+                ...SAMPLE_MAJSOUL_GAME,
+                uuid,
+                timestamp: Date.now()
+            }
         }
 
         return await this.saveGameRecord(gameRecord)
     }
+
 
     public async importRawPaipu(
         content: string,
@@ -328,6 +367,139 @@ export class PaipuService {
             gameIds
         }
     }
+
+    /*_ GEMINI THINKING _*/
+    public async startBatchAsync(urls: readonly string[]): Promise<BatchAsyncImportResponse> {
+        this.cleanupOldJobs()
+
+        const jobId = `job_${Date.now()}_${randomUUID().replace(/-/g, '').slice(0, 8)}`
+        const job: BatchPaipuJobInternal = {
+            jobId,
+            total: urls.length,
+            completed: 0,
+            failed: 0,
+            isFinished: false,
+            errors: [],
+            gameIds: [],
+            createdAt: Date.now()
+        }
+
+        this.batchJobs.set(jobId, job)
+
+        // 비동기 백그라운드 프로미스를 통해 대국 수집 및 분석 시작 (non-blocking)
+        void this.processBatchJob(jobId, urls)
+
+        return {
+            jobId,
+            total: urls.length
+        }
+    }
+
+    public getBatchStatus(jobId: string): BatchPaipuJobStatus {
+        /*_ GEMINI THINKING _*/
+        const job = this.batchJobs.get(jobId)
+        if (!job) {
+            throw new NotFoundException(`Batch job with id "${jobId}" not found`)
+        }
+
+        const processed = job.completed + job.failed
+        const progressPercent = job.total === 0 ? 100 : Math.min(100, Math.round((processed / job.total) * 100))
+
+        return {
+            jobId: job.jobId,
+            total: job.total,
+            completed: job.completed,
+            failed: job.failed,
+            progressPercent,
+            isFinished: job.isFinished,
+            errors: [...job.errors],
+            gameIds: [...job.gameIds]
+        }
+    }
+
+    protected async delay(ms: number): Promise<void> {
+        if (ms > 0) {
+            await new Promise((resolve) => setTimeout(resolve, ms))
+        }
+    }
+
+    protected async processBatchJob(jobId: string, urls: readonly string[]): Promise<void> {
+        /*_ GEMINI THINKING _*/
+        const job = this.batchJobs.get(jobId)
+        if (!job) {
+            return
+        }
+
+        try {
+            const seenUuids = new Set<string>()
+
+            for (let i = 0; i < urls.length; i++) {
+                const url = urls[i]
+                if (url === undefined) {
+                    continue
+                }
+
+                if (i > 0 && this.rateLimitDelayMs > 0) {
+                    await this.delay(this.rateLimitDelayMs)
+                }
+
+                const trimmed = url.trim()
+                if (!trimmed) {
+                    job.failed++
+                    job.errors.push(`URL ${i + 1}: 빈 입력값입니다.`)
+                    continue
+                }
+
+                try {
+                    const uuid = this.extractUuid(trimmed)
+                    if (seenUuids.has(uuid)) {
+                        job.completed++
+                        continue
+                    }
+                    seenUuids.add(uuid)
+
+                    const res = await this.importPaipu(trimmed)
+                    if (res.success) {
+                        job.completed++
+                        job.gameIds.push(res.gameId)
+                    } else {
+                        job.failed++
+                        job.errors.push(`대국 저장 실패 (${trimmed})`)
+                    }
+                } catch (err) {
+                    job.failed++
+                    const msg = err instanceof Error ? err.message : String(err)
+                    job.errors.push(`대국 처리 실패 (${trimmed}): ${msg}`)
+                }
+            }
+        } catch (fatalErr) {
+            const msg = fatalErr instanceof Error ? fatalErr.message : String(fatalErr)
+            job.errors.push(`치명적 배치 처리 오류: ${msg}`)
+        } finally {
+            job.isFinished = true
+        }
+    }
+
+    protected cleanupOldJobs(): void {
+        const now = Date.now()
+        const maxAgeMs = 60 * 60 * 1000
+        for (const [id, job] of this.batchJobs.entries()) {
+            if (job.isFinished && now - job.createdAt > maxAgeMs) {
+                this.batchJobs.delete(id)
+            }
+        }
+        if (this.batchJobs.size > 200) {
+            for (const [id, job] of this.batchJobs.entries()) {
+                if (this.batchJobs.size <= 200) {
+                    break
+                }
+                if (job.isFinished) {
+                    this.batchJobs.delete(id)
+                }
+            }
+        }
+    }
+
 
     protected async fetchGameForDetail(gameId: string): Promise<GameWithDetailRelations | null> {
         return await this.prisma.game.findUnique({

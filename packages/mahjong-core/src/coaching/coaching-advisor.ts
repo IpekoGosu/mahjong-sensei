@@ -1,2 +1,1311 @@
-/*_ GEMINI THINKING _*/
-export * from '../metrics/coaching-advisor'
+import {
+    SeatIndex,
+    PerformanceQuadrant,
+    MistakeCategory,
+    CriticalMistakeHighlight,
+    GameCoachingReport,
+    OrasuSituationSummary,
+    TiltDiagnosisResult
+} from '@mahjong-sensei/types'
+import { MajsoulGameRecord, MajsoulRoundRecord } from '../parser/types'
+import { ShantenCalculator } from '../shanten'
+import { MetricCalculator } from '../metrics'
+import { LuckEvaluator } from '../metrics/luck-evaluator'
+import { SkillEvaluator } from '../metrics/skill-evaluator'
+import { TILE_NAMES, TileConverter } from '../tiles'
+import {
+    ScoreSituationEvaluator,
+    RoundSituationSummary
+} from './score-situation-evaluator'
+
+export type { MistakeCategory, CriticalMistakeHighlight, GameCoachingReport, OrasuSituationSummary, TiltDiagnosisResult }
+
+export interface OptimalDiscardResult {
+    readonly tile: string
+    readonly shanten: number
+    readonly ukeire: number
+}
+
+export interface MistakeFeedbackParams {
+    readonly category: MistakeCategory
+    readonly turnNumber: number
+    readonly discardedTile: string
+    readonly optimalTile: string
+    readonly prevShanten: number
+    readonly afterShanten: number
+    readonly optimalUkeire: number
+    readonly actualUkeire: number
+    readonly roundIndex?: number
+    readonly evLoss?: number | undefined
+}
+
+interface DiscardCandidate {
+    readonly tile: string
+    readonly shanten: number
+    readonly ukeire: number
+}
+
+export class CoachingAdvisor {
+    private readonly shantenCalc: ShantenCalculator = new ShantenCalculator()
+    private readonly metricCalculator: MetricCalculator = new MetricCalculator()
+    private readonly luckEvaluator: LuckEvaluator = new LuckEvaluator()
+    private readonly skillEvaluator: SkillEvaluator = new SkillEvaluator()
+    private readonly situationEvaluator: ScoreSituationEvaluator = new ScoreSituationEvaluator()
+
+    /*_ GEMINI THINKING _*/
+    public analyzeGame(
+        gameRecord: MajsoulGameRecord,
+        targetSeat: SeatIndex,
+        is3P?: boolean,
+        tiltDiagnosis?: TiltDiagnosisResult
+    ): GameCoachingReport {
+        const isThreePlayer = is3P ?? (
+            gameRecord.players.length === 3 ||
+            gameRecord.roomType.includes('3인') ||
+            gameRecord.roomType.includes('3P') ||
+            gameRecord.rounds.some((r) => r.actions.some((a) => a.type === 'RecordBaBei') || (r.header.hands[3]?.length ?? 0) === 0)
+        )
+
+        const allMistakes: CriticalMistakeHighlight[] = []
+        let totalLuck = 0
+        let totalSkill = 0
+        const roundCount = gameRecord.rounds.length || 1
+
+        const isEastOnly = gameRecord.roomType.includes('동풍') || gameRecord.roomType.includes('East')
+        const roundSummaries: RoundSituationSummary[] = []
+
+        let rIdx = 0
+        while (rIdx < gameRecord.rounds.length) {
+            const round = gameRecord.rounds[rIdx]
+            if (round) {
+                const luckMetric = this.luckEvaluator.evaluateRound(round, targetSeat)
+                const skillMetric = this.skillEvaluator.evaluateRound(round, targetSeat)
+                totalLuck += luckMetric.luckScore
+                totalSkill += skillMetric.skillScore
+
+                const isOrasu = this.situationEvaluator.isOrasu(round.header.chang, round.header.ju, isThreePlayer, isEastOnly)
+                const startSit = this.situationEvaluator.calculatePlayerScoreSituation(round.header.scores, targetSeat, round.header.ju, isThreePlayer)
+
+                const roundMistakes = this.analyzeRound(round, rIdx, targetSeat, isThreePlayer, isEastOnly)
+                allMistakes.push(...roundMistakes)
+
+                const roundSitScore = this.evaluateRoundSituationScore(round, targetSeat, isThreePlayer, isEastOnly, roundMistakes)
+                const dropped2ndTo3rd = roundMistakes.some((m) => m.mistakeCategory === 'ORASU_FATAL_DEAL_IN' || m.mistakeCategory === 'ORASU_SECOND_DEFENSE_FAILURE')
+
+                roundSummaries.push({
+                    roundIndex: rIdx,
+                    isOrasu,
+                    is3P: isThreePlayer,
+                    startRank: startSit.rank,
+                    finalRank: dropped2ndTo3rd ? 3 : startSit.rank,
+                    droppedFrom2ndTo3rd: dropped2ndTo3rd,
+                    situationScore: roundSitScore
+                })
+            }
+            rIdx++
+        }
+
+        const avgLuck = totalLuck / roundCount
+        const avgSkill = totalSkill / roundCount
+        const quadrant = this.metricCalculator.classifyQuadrant(avgLuck, avgSkill)
+
+        // 치명적 EV Loss (evLoss >= 2500) 실수를 최우선 순위로 정렬하고, 그 외는 severityScore 순으로 정렬
+        allMistakes.sort((a, b) => {
+            const aIsCriticalEv = a.evLoss !== undefined && a.evLoss >= 2500 ? 1 : 0
+            const bIsCriticalEv = b.evLoss !== undefined && b.evLoss >= 2500 ? 1 : 0
+            if (aIsCriticalEv !== bIsCriticalEv) {
+                return bIsCriticalEv - aIsCriticalEv
+            }
+            return b.severityScore - a.severityScore
+        })
+        const criticalMistakes = allMistakes.slice(0, 3)
+
+        const overallSituationScore = this.situationEvaluator.calculateOverallSituationScore(roundSummaries)
+
+        const orasuSummary = roundSummaries.find((s) => s.isOrasu)
+        let orasuEvaluation: OrasuSituationSummary | undefined = undefined
+        if (orasuSummary) {
+            orasuEvaluation = {
+                isOrasuEvaluated: true,
+                situationScore: orasuSummary.situationScore,
+                droppedFrom2ndTo3rd: orasuSummary.droppedFrom2ndTo3rd,
+                summaryKo: orasuSummary.droppedFrom2ndTo3rd
+                    ? '오라스 2위 상황에서 무리한 승부로 3위(라스) 전락'
+                    : orasuSummary.startRank === 2
+                        ? '오라스 2위 상황에서 안정적인 방어로 순위 유지'
+                        : '오라스 국면 정상 종료'
+            }
+        }
+
+        const overallSummaryKo = this.buildOverallSummary(quadrant, criticalMistakes, isThreePlayer, overallSituationScore)
+        const actionableAdviceKo = this.buildActionableAdvice(criticalMistakes, isThreePlayer, tiltDiagnosis)
+
+        return {
+            gameId: gameRecord.uuid,
+            targetSeat,
+            is3P: isThreePlayer,
+            quadrant,
+            criticalMistakes,
+            overallSummaryKo,
+            actionableAdviceKo,
+            situationScore: overallSituationScore,
+            orasuEvaluation,
+            tiltDiagnosis
+        }
+    }
+
+    /*_ GEMINI THINKING _*/
+    public analyzeRound(
+        round: MajsoulRoundRecord,
+        roundIndex: number,
+        targetSeat: SeatIndex,
+        is3P: boolean,
+        isEastOnly: boolean = false
+    ): readonly CriticalMistakeHighlight[] {
+        const mistakes: CriticalMistakeHighlight[] = []
+        const currentHand = [...(round.header.hands[targetSeat] ?? [])]
+        const visibleCounts = new Map<string, number>()
+        const activeRiichiSeats = new Set<SeatIndex>()
+        const opponentSafeTiles = new Map<SeatIndex, Set<string>>()
+        opponentSafeTiles.set(0, new Set<string>())
+        opponentSafeTiles.set(1, new Set<string>())
+        opponentSafeTiles.set(2, new Set<string>())
+        opponentSafeTiles.set(3, new Set<string>())
+
+        const kitaCounts = new Map<SeatIndex, number>([[0, 0], [1, 0], [2, 0], [3, 0]])
+        const meldDoraCounts = new Map<SeatIndex, number>([[0, 0], [1, 0], [2, 0], [3, 0]])
+
+        const doraIndicators: string[] = []
+        let seenDoraCount = 0
+        let lastDiscardedTile: string | null = null
+        let targetTurnNumber = 0
+        let targetMeldCount = 0
+        let isTargetInRiichi = false
+
+        const chang = round.header.chang ?? 0
+        const roundWind = `${chang + 1}z`
+        const ju = round.header.ju ?? 0
+        const seatWindVal = is3P
+            ? (((targetSeat - (ju % 3)) % 3 + 3) % 3) + 1
+            : (((targetSeat - (ju % 4)) % 4 + 4) % 4) + 1
+        const seatWind = `${seatWindVal}z`
+
+        const isOrasu = this.situationEvaluator.isOrasu(chang, ju, is3P, isEastOnly)
+        const initialSituation = this.situationEvaluator.calculatePlayerScoreSituation(round.header.scores, targetSeat, ju, is3P)
+
+        if (round.header.dora) {
+            doraIndicators.push(round.header.dora)
+            this.addVisibleTile(round.header.dora, visibleCounts)
+        }
+
+        const actions = round.actions
+        let aIdx = 0
+        while (aIdx < actions.length) {
+            const action = actions[aIdx]
+            if (!action) {
+                aIdx++
+                continue
+            }
+
+            if (action.type === 'RecordDealTile') {
+                seenDoraCount = this.syncRevealedDoras(action.doras, doraIndicators, visibleCounts, seenDoraCount)
+
+                if (action.seat === targetSeat) {
+                    currentHand.push(action.tile)
+                }
+            } else if (action.type === 'RecordDiscardTile') {
+                seenDoraCount = this.syncRevealedDoras(action.doras, doraIndicators, visibleCounts, seenDoraCount)
+
+                lastDiscardedTile = action.tile
+                const normDiscard = this.normalizeTile(action.tile)
+
+                if (action.seat !== targetSeat) {
+                    this.addVisibleTile(action.tile, visibleCounts)
+                    opponentSafeTiles.get(action.seat)?.add(normDiscard)
+
+                    if (action.isLiqi) {
+                        activeRiichiSeats.add(action.seat)
+                    }
+
+                    for (const riichiSeat of activeRiichiSeats) {
+                        opponentSafeTiles.get(riichiSeat)?.add(normDiscard)
+                    }
+                } else {
+                    targetTurnNumber++
+
+                    if (!isTargetInRiichi) {
+                        const prevShanten = this.shantenCalc.calculate(currentHand, is3P, targetMeldCount)
+
+                        const handAfterDiscard = [...currentHand]
+                        const removeIdx = handAfterDiscard.indexOf(action.tile)
+                        if (removeIdx !== -1) {
+                            handAfterDiscard.splice(removeIdx, 1)
+                        } else {
+                            const altIdx = handAfterDiscard.findIndex((t) => this.normalizeTile(t) === normDiscard)
+                            if (altIdx !== -1) {
+                                handAfterDiscard.splice(altIdx, 1)
+                            }
+                        }
+
+                        const afterShanten = this.shantenCalc.calculate(handAfterDiscard, is3P, targetMeldCount)
+                        const actualUkeire = this.calculateUkeire(handAfterDiscard, visibleCounts, is3P, targetMeldCount)
+
+                        let didDealIn = false
+                        let dealInPoints = 0
+                        let dealInWinnerSeat: SeatIndex = 0
+                        if (aIdx + 1 < actions.length) {
+                            const nextAction = actions[aIdx + 1]
+                            if (nextAction && nextAction.type === 'RecordHule') {
+                                for (const h of nextAction.hules) {
+                                    const delta = h.deltaScores[targetSeat] ?? 0
+                                    const isTsumo = this.isTsumoWin(h.deltaScores, h.seat)
+                                    if (h.seat !== targetSeat && delta < 0 && !isTsumo) {
+                                        didDealIn = true
+                                        dealInPoints = Math.max(dealInPoints, Math.abs(delta))
+                                        dealInWinnerSeat = h.seat
+                                    }
+                                }
+                            }
+                        }
+
+                        const discardSafety = this.calculateDiscardSafety(
+                            action.tile,
+                            activeRiichiSeats,
+                            opponentSafeTiles,
+                            visibleCounts,
+                            currentHand
+                        )
+
+                        let safestTileInHand: string | null = null
+                        let maxSafetyInHand = -1
+                        let bestSafeShanten = 999
+                        let bestSafeUkeire = -1
+
+                        if (activeRiichiSeats.size > 0) {
+                            for (const t of currentHand) {
+                                const s = this.calculateDiscardSafety(
+                                    t,
+                                    activeRiichiSeats,
+                                    opponentSafeTiles,
+                                    visibleCounts,
+                                    currentHand
+                                )
+                                const cHand = [...currentHand]
+                                const rIdx = cHand.indexOf(t)
+                                if (rIdx !== -1) {
+                                    cHand.splice(rIdx, 1)
+                                }
+                                const shanten = this.shantenCalc.calculate(cHand, is3P, targetMeldCount)
+                                const ukeire = this.calculateUkeire(cHand, visibleCounts, is3P, targetMeldCount)
+
+                                if (s > maxSafetyInHand) {
+                                    maxSafetyInHand = s
+                                    safestTileInHand = t
+                                    bestSafeShanten = shanten
+                                    bestSafeUkeire = ukeire
+                                } else if (s === maxSafetyInHand && s >= 0.85) {
+                                    if (shanten < bestSafeShanten || (shanten === bestSafeShanten && ukeire > bestSafeUkeire)) {
+                                        safestTileInHand = t
+                                        bestSafeShanten = shanten
+                                        bestSafeUkeire = ukeire
+                                    } else if (shanten === bestSafeShanten && ukeire === bestSafeUkeire && safestTileInHand !== null) {
+                                        const curDora = this.getTileDoraValue(t, doraIndicators, is3P)
+                                        const prevDora = this.getTileDoraValue(safestTileInHand, doraIndicators, is3P)
+                                        if (curDora < prevDora) {
+                                            safestTileInHand = t
+                                        } else if (curDora === prevDora) {
+                                            const curPref = this.getDiscardPreference(t, currentHand, is3P, roundWind, seatWind, targetTurnNumber)
+                                            const prevPref = this.getDiscardPreference(safestTileInHand, currentHand, is3P, roundWind, seatWind, targetTurnNumber)
+                                            if (curPref > prevPref) {
+                                                safestTileInHand = t
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        const combinedSafeTiles = new Set<string>()
+                        if (activeRiichiSeats.size > 0) {
+                            for (const t of currentHand) {
+                                const s = this.calculateDiscardSafety(
+                                    t,
+                                    activeRiichiSeats,
+                                    opponentSafeTiles,
+                                    visibleCounts,
+                                    currentHand
+                                )
+                                if (s >= 0.85) {
+                                    combinedSafeTiles.add(this.normalizeTile(t))
+                                }
+                            }
+                        }
+
+                        const optimalResult = this.findOptimalDiscard(
+                            currentHand,
+                            visibleCounts,
+                            is3P,
+                            activeRiichiSeats.size > 0 && prevShanten >= 1 ? combinedSafeTiles : undefined,
+                            targetMeldCount,
+                            doraIndicators,
+                            targetTurnNumber,
+                            roundWind,
+                            seatWind
+                        )
+
+                        let mistakeCategory: MistakeCategory | null = null
+                        let severityScore = 0
+                        let chosenOptimalTile = optimalResult.tile
+                        let chosenOptimalUkeire = optimalResult.ukeire
+                        let customCoachingMessageKo: string | null = null
+                        let evLoss: number | undefined = undefined
+
+                        const hasActiveRiichi = activeRiichiSeats.size > 0
+
+                        let handDoraCount = 0
+                        for (const t of currentHand) {
+                            handDoraCount += this.getTileDoraValue(t, doraIndicators, is3P)
+                        }
+                        const targetKitaCount = kitaCounts.get(targetSeat) ?? 0
+                        const totalDorasAndKitas = handDoraCount + targetKitaCount
+
+                        const isHighValueTenpai = prevShanten === 0 && (is3P ? totalDorasAndKitas >= 3 : totalDorasAndKitas >= 4)
+
+                        if (didDealIn && safestTileInHand !== null && maxSafetyInHand >= 0.85 && (prevShanten >= 1 || afterShanten >= 1)) {
+                            const dealInEval = this.situationEvaluator.evaluateDealInSituation(
+                                round.header,
+                                targetSeat,
+                                dealInWinnerSeat,
+                                dealInPoints,
+                                is3P,
+                                isEastOnly,
+                                Math.max(prevShanten, afterShanten),
+                                kitaCounts.get(dealInWinnerSeat) ?? 0,
+                                meldDoraCounts.get(dealInWinnerSeat) ?? 0,
+                                activeRiichiSeats.has(dealInWinnerSeat),
+                                action.tile,
+                                safestTileInHand,
+                                targetTurnNumber
+                            )
+
+                            mistakeCategory = dealInEval.mistakeCategory
+                            severityScore = dealInEval.severityScore
+                            chosenOptimalTile = safestTileInHand
+                            chosenOptimalUkeire = bestSafeUkeire
+                            customCoachingMessageKo = dealInEval.coachingMessageKo
+                            evLoss = Math.max(dealInPoints, is3P ? 8000 : 0)
+                        } else if (
+                            this.isTimidFoldViolation(
+                                hasActiveRiichi,
+                                isHighValueTenpai,
+                                discardSafety,
+                                afterShanten,
+                                prevShanten,
+                                optimalResult.shanten
+                            )
+                        ) {
+                            const handValue = totalDorasAndKitas >= 6 ? 16000 : 12000
+                            evLoss = Math.round(handValue * 0.35)
+                            mistakeCategory = 'TIMID_FOLD_HIGH_EV'
+                            severityScore = Math.min(95, Math.max(80, Math.round(80 + (evLoss / 500))))
+                            chosenOptimalTile = optimalResult.tile
+                            chosenOptimalUkeire = optimalResult.ukeire
+                        } else if (
+                            isOrasu &&
+                            is3P &&
+                            initialSituation.rank === 2 &&
+                            initialSituation.scoreGapToThird <= 16000 &&
+                            activeRiichiSeats.size > 0 &&
+                            prevShanten >= 1 &&
+                            discardSafety <= 0.50 &&
+                            safestTileInHand !== null &&
+                            maxSafetyInHand >= 0.85
+                        ) {
+                            mistakeCategory = 'DANGEROUS_MUSUJI_PUSH'
+                            severityScore = Math.min(95, Math.max(82, Math.round(82 + (prevShanten * 4) + ((1.0 - discardSafety) * 15))))
+                            chosenOptimalTile = safestTileInHand
+                            chosenOptimalUkeire = bestSafeUkeire
+                            customCoachingMessageKo = `[오라스 2위 수비 경고] 3위와의 점수차(${initialSituation.scoreGapToThird.toLocaleString()}점)를 지켜야 하는 오라스 국면에서, 텐파이가 아님에도(${prevShanten}샹텐) 위험한 무스지 [${action.tile}]을(를) 승부했습니다. 방총 시 3위(라스) 추락 위험이 극히 높으므로 안전패 [${safestTileInHand}]을(를) 버려야 합니다.`
+                            evLoss = (1.0 - discardSafety) * 9000
+                        } else if (
+                            safestTileInHand !== null &&
+                            this.isCriticalSafetyViolation(
+                                hasActiveRiichi,
+                                maxSafetyInHand,
+                                discardSafety,
+                                prevShanten,
+                                totalDorasAndKitas,
+                                is3P
+                            )
+                        ) {
+                            const dealInRisk = (1.0 - discardSafety) * (is3P ? 9000 : 8000)
+                            const winPotential = prevShanten === 0 ? 500 : 0
+                            const calculatedEvLoss = Math.round(dealInRisk - winPotential)
+                            evLoss = calculatedEvLoss
+
+                            if (is3P && calculatedEvLoss >= 2500) {
+                                mistakeCategory = 'DANGER_PUSH_LOW_EV'
+                                severityScore = Math.min(95, Math.max(75, Math.round(75 + ((1.0 - discardSafety) * 20) + (prevShanten * 5))))
+                            } else {
+                                mistakeCategory = 'DANGEROUS_MUSUJI_PUSH'
+                                severityScore = Math.min(90, Math.max(70, Math.round(70 + (prevShanten * 5) + ((1.0 - discardSafety) * 15))))
+                            }
+                            chosenOptimalTile = safestTileInHand
+                            chosenOptimalUkeire = bestSafeUkeire
+                        } else if (afterShanten > prevShanten && optimalResult.shanten <= prevShanten) {
+                            mistakeCategory = 'SHANTEN_RETREAT'
+                            evLoss = Math.round(1500 + Math.max(0, 10 - targetTurnNumber) * 100)
+                            severityScore = Math.min(85, Math.max(50, 75 - (Math.min(2, prevShanten) * 10)))
+                        } else if (
+                            afterShanten === prevShanten &&
+                            (optimalResult.ukeire - actualUkeire) >= 4 &&
+                            this.normalizeTile(action.tile) !== this.normalizeTile(optimalResult.tile)
+                        ) {
+                            mistakeCategory = 'UKEIRE_LOSS'
+                            evLoss = Math.round((optimalResult.ukeire - actualUkeire) * 350)
+                            severityScore = Math.min(70, Math.max(25, Math.round(30 + ((optimalResult.ukeire - actualUkeire) * 2.5))))
+                        }
+
+                        if (mistakeCategory !== null) {
+                            const coachingMessageKo = customCoachingMessageKo ?? this.buildMistakeFeedback({
+                                category: mistakeCategory,
+                                turnNumber: targetTurnNumber,
+                                discardedTile: action.tile,
+                                optimalTile: chosenOptimalTile,
+                                prevShanten,
+                                afterShanten,
+                                optimalUkeire: chosenOptimalUkeire,
+                                actualUkeire,
+                                roundIndex,
+                                evLoss
+                            })
+
+                            mistakes.push({
+                                roundIndex,
+                                turnNumber: targetTurnNumber,
+                                discardedTile: action.tile,
+                                optimalTile: chosenOptimalTile,
+                                prevShanten,
+                                afterShanten,
+                                optimalUkeire: chosenOptimalUkeire,
+                                actualUkeire,
+                                mistakeCategory,
+                                severityScore,
+                                coachingMessageKo,
+                                evLoss
+                            })
+                        }
+                    }
+
+                    const curIdx = currentHand.indexOf(action.tile)
+                    if (curIdx !== -1) {
+                        currentHand.splice(curIdx, 1)
+                    } else {
+                        const altIdx = currentHand.findIndex((t) => this.normalizeTile(t) === normDiscard)
+                        if (altIdx !== -1) {
+                            currentHand.splice(altIdx, 1)
+                        }
+                    }
+
+                    if (action.isLiqi) {
+                        isTargetInRiichi = true
+                    }
+
+                    this.addVisibleTile(action.tile, visibleCounts)
+                    for (const riichiSeat of activeRiichiSeats) {
+                        opponentSafeTiles.get(riichiSeat)?.add(normDiscard)
+                    }
+                }
+            } else if (action.type === 'RecordChiPengGang') {
+                let skippedCalled = false
+                const handTilesToRemove: string[] = []
+
+                for (const tile of action.tiles) {
+                    if (
+                        !skippedCalled &&
+                        lastDiscardedTile !== null &&
+                        this.normalizeTile(tile) === this.normalizeTile(lastDiscardedTile)
+                    ) {
+                        skippedCalled = true
+                        continue
+                    }
+
+                    if (action.seat !== targetSeat) {
+                        this.addVisibleTile(tile, visibleCounts)
+                    } else {
+                        handTilesToRemove.push(tile)
+                    }
+                }
+
+                const meldDoras = this.countTilesDoras(action.tiles, doraIndicators, is3P)
+                meldDoraCounts.set(action.seat, (meldDoraCounts.get(action.seat) ?? 0) + meldDoras)
+
+                if (action.seat === targetSeat) {
+                    targetMeldCount++
+                    for (const tile of handTilesToRemove) {
+                        let idx = currentHand.indexOf(tile)
+                        if (idx === -1) {
+                            const norm = this.normalizeTile(tile)
+                            idx = currentHand.findIndex((h) => this.normalizeTile(h) === norm)
+                        }
+                        if (idx !== -1) {
+                            currentHand.splice(idx, 1)
+                        }
+                        this.addVisibleTile(tile, visibleCounts)
+                    }
+                }
+            } else if (action.type === 'RecordAnGangAddGang') {
+                const gangDoras = this.countTilesDoras(action.tiles, doraIndicators, is3P)
+                meldDoraCounts.set(action.seat, (meldDoraCounts.get(action.seat) ?? 0) + gangDoras)
+
+                if (action.seat !== targetSeat) {
+                    if (action.gangType === 'ankan') {
+                        for (const tile of action.tiles) {
+                            this.addVisibleTile(tile, visibleCounts)
+                        }
+                    } else if (action.tiles.length > 0) {
+                        const addedTile = action.tiles[0]
+                        if (addedTile) {
+                            this.addVisibleTile(addedTile, visibleCounts)
+                        }
+                    }
+                } else {
+                    if (action.gangType === 'ankan') {
+                        targetMeldCount++
+                        for (const tile of action.tiles) {
+                            let idx = currentHand.indexOf(tile)
+                            if (idx === -1) {
+                                const norm = this.normalizeTile(tile)
+                                idx = currentHand.findIndex((h) => this.normalizeTile(h) === norm)
+                            }
+                            if (idx !== -1) {
+                                currentHand.splice(idx, 1)
+                            }
+                            this.addVisibleTile(tile, visibleCounts)
+                        }
+                    } else if (action.tiles.length > 0) {
+                        const addedTile = action.tiles[0]
+                        if (addedTile) {
+                            let idx = currentHand.indexOf(addedTile)
+                            if (idx === -1) {
+                                const norm = this.normalizeTile(addedTile)
+                                idx = currentHand.findIndex((h) => this.normalizeTile(h) === norm)
+                            }
+                            if (idx !== -1) {
+                                currentHand.splice(idx, 1)
+                            }
+                            this.addVisibleTile(addedTile, visibleCounts)
+                        }
+                    }
+                }
+            } else if (action.type === 'RecordBaBei') {
+                seenDoraCount = this.syncRevealedDoras(action.doras, doraIndicators, visibleCounts, seenDoraCount)
+                this.addVisibleTile('4z', visibleCounts)
+                kitaCounts.set(action.seat, (kitaCounts.get(action.seat) ?? 0) + 1)
+
+                if (action.seat === targetSeat) {
+                    const idx = currentHand.indexOf('4z')
+                    if (idx !== -1) {
+                        currentHand.splice(idx, 1)
+                    }
+                }
+            }
+            aIdx++
+        }
+
+        return mistakes
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected evaluateRoundSituationScore(
+        round: MajsoulRoundRecord,
+        targetSeat: SeatIndex,
+        is3P: boolean,
+        isEastOnly: boolean,
+        mistakes: readonly CriticalMistakeHighlight[]
+    ): number {
+        let score = 80
+        const isOrasu = this.situationEvaluator.isOrasu(round.header.chang, round.header.ju, is3P, isEastOnly)
+        const sit = this.situationEvaluator.calculatePlayerScoreSituation(round.header.scores, targetSeat, round.header.ju, is3P)
+
+        if (isOrasu && is3P) {
+            if (sit.rank === 2) {
+                const hadFatalDrop = mistakes.some((m) => m.mistakeCategory === 'ORASU_FATAL_DEAL_IN' || m.mistakeCategory === 'ORASU_SECOND_DEFENSE_FAILURE')
+                if (hadFatalDrop) {
+                    score -= 45
+                } else {
+                    score += 15
+                }
+            } else if (sit.rank === 1) {
+                score += 15
+            }
+        }
+
+        for (const m of mistakes) {
+            if (m.mistakeCategory === 'HIGH_VALUE_RISK_DEAL_IN' || m.mistakeCategory === 'KITA_DORA_DEAL_IN') {
+                score -= 25
+            } else if (m.mistakeCategory === 'RECKLESS_PUSH_DEAL_IN') {
+                score -= 15
+            } else if (m.mistakeCategory === 'DANGEROUS_MUSUJI_PUSH') {
+                score -= 10
+            }
+        }
+
+        return Math.max(0, Math.min(100, score))
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected countTilesDoras(
+        tiles: readonly string[],
+        doraIndicators: readonly string[],
+        is3P: boolean
+    ): number {
+        let count = 0
+        for (const t of tiles) {
+            count += this.getTileDoraValue(t, doraIndicators, is3P)
+        }
+        return count
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected calculateUkeire(
+        hand: readonly string[],
+        visibleCounts: ReadonlyMap<string, number>,
+        is3P: boolean,
+        meldCount: number = 0
+    ): number {
+        const currentShanten = this.shantenCalc.calculate(hand, is3P, meldCount)
+        if (currentShanten === -1) {
+            return 0
+        }
+
+        let totalUkeire = 0
+
+        for (const tile of TILE_NAMES) {
+            if (is3P && (
+                tile === '2m' || tile === '3m' || tile === '4m' ||
+                tile === '5m' || tile === '6m' || tile === '7m' || tile === '8m'
+            )) {
+                continue
+            }
+
+            const inHandCount = hand.filter((t) => this.normalizeTile(t) === tile).length
+            const visibleCount = visibleCounts.get(tile) ?? 0
+            const remaining = Math.max(0, 4 - inHandCount - visibleCount)
+
+            if (remaining <= 0) {
+                continue
+            }
+
+            const nextShanten = this.shantenCalc.calculate([...hand, tile], is3P, meldCount)
+            if (nextShanten < currentShanten) {
+                totalUkeire += remaining
+            }
+        }
+
+        return totalUkeire
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected findOptimalDiscard(
+        hand: readonly string[],
+        visibleCounts: ReadonlyMap<string, number>,
+        is3P: boolean,
+        safeTiles?: ReadonlySet<string>,
+        meldCount: number = 0,
+        doraIndicators: readonly string[] = [],
+        turnNumber: number = 1,
+        roundWind?: string,
+        seatWind?: string
+    ): OptimalDiscardResult {
+        if (hand.length === 0) {
+            return { tile: '', shanten: 8, ukeire: 0 }
+        }
+
+        const uniqueTiles: string[] = []
+        const seen = new Set<string>()
+        for (const tile of hand) {
+            if (!seen.has(tile)) {
+                seen.add(tile)
+                uniqueTiles.push(tile)
+            }
+        }
+
+        const candidates: DiscardCandidate[] = []
+
+        for (const candidateTile of uniqueTiles) {
+            const candidateHand = [...hand]
+            const removeIdx = candidateHand.indexOf(candidateTile)
+            if (removeIdx !== -1) {
+                candidateHand.splice(removeIdx, 1)
+            }
+            const shanten = this.shantenCalc.calculate(candidateHand, is3P, meldCount)
+            const ukeire = this.calculateUkeire(candidateHand, visibleCounts, is3P, meldCount)
+            candidates.push({ tile: candidateTile, shanten, ukeire })
+        }
+
+        const compareCandidates = (a: DiscardCandidate, b: DiscardCandidate): number => {
+            if (a.shanten !== b.shanten) {
+                return a.shanten - b.shanten
+            }
+
+            if (a.ukeire !== b.ukeire) {
+                return b.ukeire - a.ukeire
+            }
+
+            const aDora = this.getTileDoraValue(a.tile, doraIndicators, is3P)
+            const bDora = this.getTileDoraValue(b.tile, doraIndicators, is3P)
+            if (aDora !== bDora) {
+                return aDora - bDora
+            }
+
+            const aPref = this.getDiscardPreference(a.tile, hand, is3P, roundWind, seatWind, turnNumber)
+            const bPref = this.getDiscardPreference(b.tile, hand, is3P, roundWind, seatWind, turnNumber)
+            if (aPref !== bPref) {
+                return bPref - aPref
+            }
+
+            return 0
+        }
+
+        if (safeTiles && safeTiles.size > 0) {
+            const safeCandidates = candidates.filter((c) => safeTiles.has(this.normalizeTile(c.tile)))
+            if (safeCandidates.length > 0) {
+                safeCandidates.sort(compareCandidates)
+                const bestSafe = safeCandidates[0]
+                if (bestSafe) {
+                    return bestSafe
+                }
+            }
+        }
+
+        candidates.sort(compareCandidates)
+
+        const best = candidates[0]
+        if (best) {
+            return best
+        }
+
+        return { tile: hand[0] ?? '', shanten: 8, ukeire: 0 }
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected syncRevealedDoras(
+        doras: readonly string[] | undefined,
+        doraIndicators: string[],
+        visibleCounts: Map<string, number>,
+        seenDoraCount: number
+    ): number {
+        if (!doras || doras.length <= seenDoraCount) {
+            return seenDoraCount
+        }
+        const newDoras = doras.slice(seenDoraCount)
+        for (const dora of newDoras) {
+            doraIndicators.push(dora)
+            this.addVisibleTile(dora, visibleCounts)
+        }
+        return doras.length
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected getTileDoraValue(
+        tile: string,
+        doraIndicators: readonly string[],
+        is3P: boolean
+    ): number {
+        let value = 0
+        if (TileConverter.isRedDora(tile)) {
+            value += 1
+        }
+        const norm = this.normalizeTile(tile)
+        if (is3P && norm === '4z') {
+            value += 1
+        }
+        for (const indicator of doraIndicators) {
+            const nextDora = TileConverter.getNextDoraTile(indicator, is3P)
+            if (norm === nextDora) {
+                value += 1
+            }
+        }
+        return value
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected getDiscardPreference(
+        tile: string,
+        hand: readonly string[],
+        is3P: boolean,
+        roundWind?: string,
+        seatWind?: string,
+        turnNumber: number = 1
+    ): number {
+        const norm = this.normalizeTile(tile)
+        const countInHand = hand.filter((t) => this.normalizeTile(t) === norm).length
+        const isEarlyGame = turnNumber <= 6
+
+        if (countInHand > 1) {
+            if (norm.endsWith('z')) {
+                if (is3P && norm === '4z') {
+                    return 20
+                }
+                const isYakuhai = norm === '5z' || norm === '6z' || norm === '7z' ||
+                    norm === roundWind || norm === seatWind
+                return isYakuhai ? 28 : 30
+            }
+            const num = Number.parseInt(norm.slice(0, -1), 10)
+            if (num === 1 || num === 9) {
+                return 25
+            }
+            if (num === 2 || num === 8) {
+                return 20
+            }
+            return 15
+        }
+
+        if (norm.endsWith('z')) {
+            if (is3P && norm === '4z') {
+                return 25
+            }
+            const isYakuhai = norm === '5z' || norm === '6z' || norm === '7z' ||
+                norm === roundWind || norm === seatWind
+            if (isYakuhai) {
+                return isEarlyGame ? 92 : 90
+            }
+            return isEarlyGame ? 100 : 96
+        }
+
+        const suit = norm.slice(-1)
+        const val = Number.parseInt(norm.slice(0, -1), 10)
+
+        if (is3P && suit === 'm') {
+            return isEarlyGame ? 88 : 85
+        }
+
+        let hasDist1 = false
+        let hasDist2 = false
+
+        for (const t of hand) {
+            const tn = this.normalizeTile(t)
+            if (tn.endsWith(suit)) {
+                const tv = Number.parseInt(tn.slice(0, -1), 10)
+                const diff = Math.abs(tv - val)
+                if (diff === 1) {
+                    hasDist1 = true
+                } else if (diff === 2) {
+                    hasDist2 = true
+                }
+            }
+        }
+
+        if (!hasDist1 && !hasDist2) {
+            if (val === 1 || val === 9) {
+                return isEarlyGame ? 84 : 80
+            }
+            if (val === 2 || val === 8) {
+                return 60
+            }
+            if (val === 3 || val === 7) {
+                return 45
+            }
+            if (val === 4 || val === 6) {
+                return 42
+            }
+            return 40
+        }
+
+        if (!hasDist1 && hasDist2) {
+            if (val === 1 || val === 9) {
+                return 35
+            }
+            if (val === 2 || val === 8) {
+                return 32
+            }
+            return 28
+        }
+
+        if (val === 1 || val === 9) {
+            return 25
+        }
+        if (val === 2 || val === 8) {
+            return 20
+        }
+        return 10
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected buildMistakeFeedback(
+        categoryOrParams: MistakeCategory | MistakeFeedbackParams,
+        turnNumber?: number,
+        discardedTile?: string,
+        optimalTile?: string,
+        prevShanten?: number,
+        afterShanten?: number,
+        optimalUkeire?: number,
+        actualUkeire?: number,
+        evLossParam?: number
+    ): string {
+        let category: MistakeCategory
+        let turn: number
+        let discarded: string
+        let optimal: string
+        let prev: number
+        let after: number
+        let optUk: number
+        let actUk: number
+        let evLoss: number | undefined
+
+        if (typeof categoryOrParams === 'object') {
+            category = categoryOrParams.category
+            turn = categoryOrParams.turnNumber
+            discarded = categoryOrParams.discardedTile
+            optimal = categoryOrParams.optimalTile
+            prev = categoryOrParams.prevShanten
+            after = categoryOrParams.afterShanten
+            optUk = categoryOrParams.optimalUkeire
+            actUk = categoryOrParams.actualUkeire
+            evLoss = categoryOrParams.evLoss
+        } else {
+            category = categoryOrParams
+            turn = turnNumber ?? 1
+            discarded = discardedTile ?? ''
+            optimal = optimalTile ?? ''
+            prev = prevShanten ?? 0
+            after = afterShanten ?? 0
+            optUk = optimalUkeire ?? 0
+            actUk = actualUkeire ?? 0
+            evLoss = evLossParam
+        }
+
+        switch (category) {
+            case 'SHANTEN_RETREAT':
+                return `${turn}순목에 [${discarded}]을(를) 버려 샹텐수가 후퇴했습니다 (${prev}샹텐 ➔ ${after}샹텐). [${optimal}]을(를) 버려 유효패 ${optUk}장을 유지하는 것이 이상적입니다.`
+            case 'UKEIRE_LOSS':
+                return `${turn}순목에 [${discarded}] 대신 [${optimal}]을(를) 버렸다면 유효패가 ${optUk}장으로 ${optUk - actUk}장 더 넓었습니다. 효율적인 조패를 위해 고립패를 우선 정리하세요.`
+            case 'RECKLESS_PUSH_DEAL_IN':
+                return `상대 리치 선언 후 ${turn}순목에 위험패 [${discarded}]을(를) 버려 방총되었습니다. 리치에 맞서 텐파이가 아니라면 안전패 [${optimal}]을(를) 버리며 수비(베타오리)해야 합니다.`
+            case 'DANGEROUS_MUSUJI_PUSH':
+                return `상대 리치 상황에서 ${turn}순목에 텐파이가 아님에도(${prev}샹텐) 위험한 무스지 [${discarded}]을(를) 밀었습니다. 안전패 [${optimal}]을(를) 버리며 내리는 판단이 안전합니다.`
+            case 'DANGER_PUSH_LOW_EV': {
+                const lossStr = evLoss !== undefined && evLoss > 0 ? `(기대치 손실 약 -${Math.round(evLoss).toLocaleString()}점)` : ''
+                return `${turn}순목에 싼 패/노텐(${prev > 0 ? `${prev}샹텐` : '저타점'}) 상태에서 상대 만관 확정 리치에 위험패 [${discarded}]을(를) 푸시했습니다${lossStr ? ` ${lossStr}` : ''}. 안전패 [${optimal}]을(를) 내며 베타오리하는 것이 기대값상 필수적입니다.`
+            }
+            case 'TIMID_FOLD_HIGH_EV': {
+                const lossStr = evLoss !== undefined && evLoss > 0 ? `(기대치 손실 약 -${Math.round(evLoss).toLocaleString()}점)` : ''
+                return `상대 리치에 대한 과도한 방총 공포로 ${turn}순목에 고화료(하네만/배만) 텐파이를 포기하고 안전패 [${discarded}]을(를) 버리며 내렸습니다${lossStr ? ` ${lossStr}` : ''}. 고타점 텐파이는 리치 상대로도 밀었을 때의 기대값(+EV)이 압도적이므로 물러서지 않고 승부해야 합니다.`
+            }
+            case 'ORASU_FATAL_DEAL_IN':
+            case 'ORASU_SECOND_DEFENSE_FAILURE':
+                return `[오라스 2위 수비 실패] 오라스 2위 상황에서 무리하게 승부하다 [${discarded}]을(를) 방총하여 3위(라스)로 추락했습니다. 안전패 [${optimal}]을(를) 버려 2위를 지키고 라스를 회피해야 합니다.`
+            case 'HIGH_VALUE_RISK_DEAL_IN':
+            case 'KITA_DORA_DEAL_IN':
+                return `상대의 북패(키타) 및 노출 도라로 인해 고타점이 확정된 상황에서, 텐파이가 아님에도(${prev}샹텐) 위험패 [${discarded}]을(를) 버려 고타점 방총되었습니다. 안전패 [${optimal}]을(를) 버리며 철저히 수비해야 합니다.`
+        }
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected calculateDiscardSafety(
+        tile: string,
+        activeRiichiSeats: ReadonlySet<SeatIndex>,
+        opponentSafeTiles: ReadonlyMap<SeatIndex, ReadonlySet<string>>,
+        visibleTileCounts: ReadonlyMap<string, number>,
+        hand: readonly string[]
+    ): number {
+        if (activeRiichiSeats.size === 0) {
+            return 1.0
+        }
+
+        let minSafety = 1.0
+        for (const seat of activeRiichiSeats) {
+            const safeSet = opponentSafeTiles.get(seat) ?? new Set<string>()
+            const safety = this.evaluateSafetyAgainstPlayer(tile, safeSet, visibleTileCounts, hand)
+            if (safety < minSafety) {
+                minSafety = safety
+            }
+        }
+
+        return minSafety
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected evaluateSafetyAgainstPlayer(
+        tile: string,
+        safeSet: ReadonlySet<string>,
+        visibleTileCounts: ReadonlyMap<string, number>,
+        hand: readonly string[]
+    ): number {
+        const normTile = this.normalizeTile(tile)
+
+        if (safeSet.has(normTile)) {
+            return 1.0
+        }
+
+        if (normTile.endsWith('z')) {
+            const boardCopies = visibleTileCounts.get(normTile) ?? 0
+            const handCopies = hand.filter((t) => this.normalizeTile(t) === normTile).length
+            const totalVisible = boardCopies + handCopies
+            if (totalVisible >= 4) {
+                return 1.0
+            }
+            if (totalVisible === 3) {
+                return 0.95
+            }
+            if (totalVisible === 2) {
+                return 0.75
+            }
+            return 0.40
+        }
+
+        const suit = normTile.slice(-1)
+        const num = Number.parseInt(normTile.slice(0, -1), 10)
+
+        let safety = 0.20
+
+        if (num === 1) {
+            const hasSuji = safeSet.has(`4${suit}`)
+            safety = hasSuji ? 0.85 : 0.45
+        } else if (num === 9) {
+            const hasSuji = safeSet.has(`6${suit}`)
+            safety = hasSuji ? 0.85 : 0.45
+        } else if (num === 2 || num === 8) {
+            const hasSuji = safeSet.has(`5${suit}`)
+            safety = hasSuji ? 0.75 : 0.35
+        } else if (num === 3) {
+            const hasSuji = safeSet.has(`6${suit}`)
+            safety = hasSuji ? 0.70 : 0.30
+        } else if (num === 7) {
+            const hasSuji = safeSet.has(`4${suit}`)
+            safety = hasSuji ? 0.70 : 0.30
+        } else if (num === 4) {
+            const suji1 = safeSet.has(`1${suit}`)
+            const suji7 = safeSet.has(`7${suit}`)
+            if (suji1 && suji7) {
+                safety = 0.80
+            } else if (suji1 || suji7) {
+                safety = 0.50
+            } else {
+                safety = 0.20
+            }
+        } else if (num === 5) {
+            const suji2 = safeSet.has(`2${suit}`)
+            const suji8 = safeSet.has(`8${suit}`)
+            if (suji2 && suji8) {
+                safety = 0.80
+            } else if (suji2 || suji8) {
+                safety = 0.50
+            } else {
+                safety = 0.20
+            }
+        } else if (num === 6) {
+            const suji3 = safeSet.has(`3${suit}`)
+            const suji9 = safeSet.has(`9${suit}`)
+            if (suji3 && suji9) {
+                safety = 0.80
+            } else if (suji3 || suji9) {
+                safety = 0.50
+            } else {
+                safety = 0.20
+            }
+        }
+
+        let isKabe = false
+        if (num === 1) {
+            const count3 = (visibleTileCounts.get(`3${suit}`) ?? 0) + hand.filter((t) => this.normalizeTile(t) === `3${suit}`).length
+            const count2 = (visibleTileCounts.get(`2${suit}`) ?? 0) + hand.filter((t) => this.normalizeTile(t) === `2${suit}`).length
+            if (count3 >= 4 || count2 >= 4) {
+                isKabe = true
+            }
+        } else if (num === 2) {
+            const count3 = (visibleTileCounts.get(`3${suit}`) ?? 0) + hand.filter((t) => this.normalizeTile(t) === `3${suit}`).length
+            if (count3 >= 4) {
+                isKabe = true
+            }
+        } else if (num === 8) {
+            const count7 = (visibleTileCounts.get(`7${suit}`) ?? 0) + hand.filter((t) => this.normalizeTile(t) === `7${suit}`).length
+            if (count7 >= 4) {
+                isKabe = true
+            }
+        } else if (num === 9) {
+            const count7 = (visibleTileCounts.get(`7${suit}`) ?? 0) + hand.filter((t) => this.normalizeTile(t) === `7${suit}`).length
+            const count8 = (visibleTileCounts.get(`8${suit}`) ?? 0) + hand.filter((t) => this.normalizeTile(t) === `8${suit}`).length
+            if (count7 >= 4 || count8 >= 4) {
+                isKabe = true
+            }
+        }
+
+        if (isKabe && safety < 0.85) {
+            safety = 0.85
+        }
+
+        return safety
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected normalizeTile(tile: string): string {
+        return tile.replace('0m', '5m').replace('0p', '5p').replace('0s', '5s')
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected addVisibleTile(tile: string, visibleCounts: Map<string, number>): void {
+        const norm = this.normalizeTile(tile)
+        const count = visibleCounts.get(norm) ?? 0
+        visibleCounts.set(norm, count + 1)
+    }
+
+    /*_ GEMINI THINKING _*/
+    private buildOverallSummary(
+        quadrant: PerformanceQuadrant,
+        criticalMistakes: readonly CriticalMistakeHighlight[],
+        is3P: boolean,
+        situationScore: number
+    ): string {
+        const modeLabel = is3P ? '3인 마작(3P)' : '4인 마작(4P)'
+        let quadrantDesc = ''
+        switch (quadrant) {
+            case 'SKILLFUL_WIN':
+                quadrantDesc = '실력과 운이 모두 따라준 완벽한 승리(1사분면)'
+                break
+            case 'UNLUCKY_LOSS':
+                quadrantDesc = '실력은 안정적이었으나 운이 따르지 않은 억까성 패배(2사분면)'
+                break
+            case 'SLUMP_LOSS':
+                quadrantDesc = '실력 발휘와 패산 흐름 모두 아쉬웠던 슬럼프성 대국(3사분면)'
+                break
+            case 'LUCKY_FLUKE':
+                quadrantDesc = '패산의 도움으로 좋은 결과를 거두었으나 실수가 다소 있었던 운빨 승리(4사분면)'
+                break
+        }
+
+        const hasOrasuFatal = criticalMistakes.some((m) => m.mistakeCategory === 'ORASU_FATAL_DEAL_IN' || m.mistakeCategory === 'ORASU_SECOND_DEFENSE_FAILURE')
+        const hasHighValueDealIn = criticalMistakes.some((m) => m.mistakeCategory === 'HIGH_VALUE_RISK_DEAL_IN' || m.mistakeCategory === 'KITA_DORA_DEAL_IN')
+
+        if (hasOrasuFatal) {
+            return `${modeLabel} 대국 분석 결과, 이번 대국은 ${quadrantDesc} 국면이었습니다. 특히 오라스 2위 상황에서 3위 방어를 실패하고 라스로 추락한 치명적 판단 오류가 감지되었습니다 (점황 점수: ${situationScore}점).`
+        }
+
+        if (hasHighValueDealIn) {
+            return `${modeLabel} 대국 분석 결과, 이번 대국은 ${quadrantDesc} 국면이었습니다. 북패(키타) 및 도라가 다수 노출된 고타점 확정 상대에 대한 무리한 방총이 대국 순위를 크게 흔들었습니다 (점황 점수: ${situationScore}점).`
+        }
+
+        if (criticalMistakes.length === 0) {
+            return `${modeLabel} 대국 분석 결과, 이번 대국은 ${quadrantDesc} 국면이었습니다. 전반적으로 무리한 타패나 패 효율 손실 없이 매우 안정적인 공수 밸런스를 보여주었습니다 (점황 점수: ${situationScore}점).`
+        }
+
+        if (criticalMistakes.some((m) => (m.evLoss ?? 0) >= 2500)) {
+            return `${modeLabel} 대국 분석 결과, 이번 대국은 ${quadrantDesc} 국면이었습니다. 총 ${criticalMistakes.length}건의 주요 개선 타패 중 기대치 손실이 2,500점을 초과하는 치명적 EV Loss 스파이크가 감지되었습니다. 일치율(A- 평점)에 안주하지 말고 고위험 국면의 공수 판단을 점검하세요 (점황 점수: ${situationScore}점).`
+        }
+
+        return `${modeLabel} 대국 분석 결과, 이번 대국은 ${quadrantDesc} 국면이었습니다. 총 ${criticalMistakes.length}건의 주요 개선 타패가 감지되었으며, 상황 판단 및 리치 대응 수비에 유의하면 실력을 더욱 향상시킬 수 있습니다 (점황 점수: ${situationScore}점).`
+    }
+
+    /*_ GEMINI THINKING _*/
+    private buildActionableAdvice(
+        criticalMistakes: readonly CriticalMistakeHighlight[],
+        is3P: boolean,
+        tiltDiagnosis?: TiltDiagnosisResult
+    ): readonly string[] {
+        const advice: string[] = []
+        const categories = new Set(criticalMistakes.map((m) => m.mistakeCategory))
+
+        if (categories.has('ORASU_FATAL_DEAL_IN') || categories.has('ORASU_SECOND_DEFENSE_FAILURE')) {
+            advice.push('3인 마작 오라스 2위 국면에서는 무리한 1위 역전보다 3위(라스) 방어가 절대적으로 우선입니다. 3위와의 점수차가 좁다면 철저히 베타오리하여 라스를 회피하세요.')
+        }
+        if (categories.has('HIGH_VALUE_RISK_DEAL_IN') || categories.has('KITA_DORA_DEAL_IN')) {
+            advice.push('상대가 북패(키타)나 도라를 2개 이상 노출한 경우 만관~하네만 이상의 고타점이 확정되므로, 텐파이가 아니라면 절대 무스지 위험패를 밀지 마세요.')
+        }
+        if (categories.has('DANGER_PUSH_LOW_EV')) {
+            advice.push('3P 대국에서는 노텐 또는 저타점 상태에서 상대 만관 확정 리치에 위험패를 미는 것이 치명적인 기대치 손실(EV Loss > 2,500점)의 주원인입니다. 만관 리치에는 철저한 베타오리를 유지하세요.')
+        }
+        if (categories.has('TIMID_FOLD_HIGH_EV')) {
+            advice.push('하네만·배만급 고화료 텐파이 상태에서는 상대 리치가 걸려 있어도 푸시하는 기대값(+EV)이 물러서는 것보다 월등히 높습니다. 과도한 방총 공포를 극복하고 승부하세요.')
+        }
+        if (categories.has('RECKLESS_PUSH_DEAL_IN')) {
+            advice.push('상대 리치 선언 시 텐파이가 아니라면 현물(Genbutsu)과 스지 안전패를 최우선으로 타패하여 방총을 방지하세요.')
+        }
+        if (categories.has('DANGEROUS_MUSUJI_PUSH')) {
+            advice.push('리치에 대항하여 1~2샹텐에서 위험한 무스지 패를 미는 것은 기대값이 낮으므로, 철저한 베타오리를 권장합니다.')
+        }
+        if (categories.has('SHANTEN_RETREAT')) {
+            advice.push('유효 타츠를 함부로 파괴하여 샹텐수가 후퇴하지 않도록 불필요한 고립패를 먼저 정리하세요.')
+        }
+        if (categories.has('UKEIRE_LOSS')) {
+            advice.push('양면(라이언멘) 대기 형태를 보존하고 유효패 매수를 극대화하는 타일 이피션시(패 효율) 원칙을 적용하세요.')
+        }
+        if (is3P && advice.length < 3) {
+            advice.push('3인 마작은 타점과 진행 속도가 매우 빠르므로, 무스지 방총 한 번이 대국 순위에 치명적인 영향을 줍니다.')
+        }
+
+        if (tiltDiagnosis && tiltDiagnosis.isTilt) {
+            advice.push(`[틸트 경고] ${tiltDiagnosis.advice}`)
+        }
+
+        if (advice.length === 0) {
+            advice.push('현재의 뛰어난 패 효율과 수비 밸런스를 계속 유지하세요.')
+        }
+
+        return advice
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected isTimidFoldViolation(
+        hasActiveRiichi: boolean,
+        isHighValueTenpai: boolean,
+        discardSafety: number,
+        afterShanten: number,
+        prevShanten: number,
+        optimalShanten: number
+    ): boolean {
+        return (
+            hasActiveRiichi &&
+            isHighValueTenpai &&
+            discardSafety >= 0.85 &&
+            afterShanten > prevShanten &&
+            optimalShanten === 0
+        )
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected isRecklessDealInViolation(
+        didDealIn: boolean,
+        hasActiveRiichi: boolean,
+        prevShanten: number,
+        maxSafetyInHand: number
+    ): boolean {
+        return (
+            didDealIn &&
+            hasActiveRiichi &&
+            prevShanten >= 1 &&
+            maxSafetyInHand >= 0.85
+        )
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected isCriticalSafetyViolation(
+        hasActiveRiichi: boolean,
+        maxSafetyInHand: number,
+        discardSafety: number,
+        prevShanten: number,
+        totalDorasAndKitas: number,
+        is3P: boolean
+    ): boolean {
+        if (!hasActiveRiichi || maxSafetyInHand < 0.85 || discardSafety > 0.50) {
+            return false
+        }
+        if (is3P) {
+            return prevShanten >= 1 || (prevShanten === 0 && totalDorasAndKitas === 0)
+        }
+        return prevShanten >= 1
+    }
+
+    /*_ GEMINI THINKING _*/
+    private isTsumoWin(deltaScores: readonly [number, number, number, number], winnerSeat: SeatIndex): boolean {
+        let payers = 0
+        let i = 0
+        while (i < 4) {
+            if (i !== winnerSeat && (deltaScores[i] ?? 0) < 0) {
+                payers++
+            }
+            i++
+        }
+        return payers >= 2
+    }
+}
