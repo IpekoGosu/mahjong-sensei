@@ -18,6 +18,7 @@ import {
     MajsoulRecordBaBei,
     MajsoulRecordHule,
     MajsoulRecordNoTile,
+    MajsoulRecordLiuJu,
     MajsoulPlayerInfo
 } from './types'
 import { PaipuParser } from './paipu-parser'
@@ -168,6 +169,14 @@ class MockLiqiBinaryDecoder extends LiqiBinaryDecoder {
 
     public testEncodeRecordNoTile(record: MajsoulRecordNoTile): Uint8Array {
         return this.encodeRecordNoTile(record)
+    }
+
+    public testDecodeRecordLiuJu(data: Uint8Array): MajsoulRecordLiuJu {
+        return this.decodeRecordLiuJu(data)
+    }
+
+    public testEncodeRecordLiuJu(record: MajsoulRecordLiuJu): Uint8Array {
+        return this.encodeRecordLiuJu(record)
     }
 
     public testDecodePlayerInfo(data: Uint8Array): MajsoulPlayerInfo {
@@ -433,6 +442,60 @@ test('MockLiqiBinaryDecoder - RecordNoTile round-trip', () => {
     const enc = mock.testEncodeRecordNoTile(noTile)
     const dec = mock.testDecodeRecordNoTile(enc)
     assert.deepStrictEqual(dec, noTile)
+})
+
+test('MockLiqiBinaryDecoder - RecordLiuJu (구종구패, type 1) round-trip with seat', () => {
+    const mock = new MockLiqiBinaryDecoder()
+    const liuju: MajsoulRecordLiuJu = {
+        type: 'RecordLiuJu',
+        liujuType: 1,
+        seat: 0
+    }
+    const enc = mock.testEncodeRecordLiuJu(liuju)
+    const dec = mock.testDecodeRecordLiuJu(enc)
+    assert.deepStrictEqual(dec, liuju)
+})
+
+test('MockLiqiBinaryDecoder - RecordLiuJu (사풍연타, type 2) round-trip without seat', () => {
+    const mock = new MockLiqiBinaryDecoder()
+    const liuju: MajsoulRecordLiuJu = {
+        type: 'RecordLiuJu',
+        liujuType: 2
+    }
+    const enc = mock.testEncodeRecordLiuJu(liuju)
+    const dec = mock.testDecodeRecordLiuJu(enc)
+    assert.deepStrictEqual(dec, liuju)
+})
+
+test('MockLiqiBinaryDecoder - RecordLiuJu alternate field 2 seat decoding fallback', () => {
+    const mock = new MockLiqiBinaryDecoder()
+    // Protobuf binary with field 1 (type=1) and field 2 (seat=2 varint)
+    const chunks = [
+        mock.testWriteVarintField(1, 1),
+        mock.testWriteVarintField(2, 2)
+    ]
+    const buf = Buffer.concat(chunks)
+    const dec = mock.testDecodeRecordLiuJu(new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength))
+    assert.strictEqual(dec.type, 'RecordLiuJu')
+    assert.strictEqual(dec.liujuType, 1)
+    assert.strictEqual(dec.seat, 2)
+})
+
+test('LiqiBinaryDecoder - decodeAction with .lq.RecordLiuJu and ActionLiuJu', () => {
+    const decoder = new LiqiBinaryDecoder()
+    const liuju: MajsoulRecordLiuJu = {
+        type: 'RecordLiuJu',
+        liujuType: 1,
+        seat: 3
+    }
+    const wrapper = decoder.encodeAction(liuju)
+    assert.strictEqual(wrapper.name, '.lq.RecordLiuJu')
+
+    const decoded = decoder.decodeAction(wrapper.name, wrapper.data)
+    assert.deepStrictEqual(decoded, liuju)
+
+    const decodedFromActionName = decoder.decodeAction('.lq.ActionLiuJu', wrapper.data)
+    assert.deepStrictEqual(decodedFromActionName, liuju)
 })
 
 test('MockLiqiBinaryDecoder - PlayerInfo round-trip', () => {
@@ -789,6 +852,64 @@ test('LiqiBinaryDecoder - 3-Player (Sanma) scores defaults handling in RecordNew
     const rawYonmaScores4 = new Uint8Array([...chunkScores4, ...rawYonmaNoScores])
     const decodedYonmaScores4 = mock.testDecodeRecordNewRound(rawYonmaScores4)
     assert.deepStrictEqual(decodedYonmaScores4.scores, [28000, 22000, 25000, 25000])
+})
+
+test('LiqiBinaryDecoder - Game record containing RecordLiuJu full round-trip', () => {
+    const decoder = new LiqiBinaryDecoder()
+    const gameWithLiuJu: MajsoulGameRecord = {
+        uuid: 'test-liuju-game-001',
+        roomType: '동풍전',
+        timestamp: 1690000000,
+        players: [
+            { accountId: 10001, nickname: 'PlayerA', seat: 0, level: 1 },
+            { accountId: 10002, nickname: 'PlayerB', seat: 1, level: 1 },
+            { accountId: 10003, nickname: 'PlayerC', seat: 2, level: 1 },
+            { accountId: 10004, nickname: 'PlayerD', seat: 3, level: 1 }
+        ],
+        rounds: [
+            {
+                header: {
+                    type: 'RecordNewRound',
+                    chang: 0,
+                    ju: 0,
+                    ben: 0,
+                    liqi: 0,
+                    scores: [25000, 25000, 25000, 25000],
+                    dora: '1m',
+                    hands: [
+                        ['1m', '9m', '1p', '9p', '1s', '9s', '1z', '2z', '3z', '4z', '5z', '6z', '7z'],
+                        ['2m', '3m', '4m', '5m', '6m', '7m', '8m', '2p', '3p', '4p', '2s', '3s', '4s'],
+                        ['2m', '3m', '4m', '5m', '6m', '7m', '8m', '2p', '3p', '4p', '2s', '3s', '4s'],
+                        ['2m', '3m', '4m', '5m', '6m', '7m', '8m', '2p', '3p', '4p', '2s', '3s', '4s']
+                    ]
+                },
+                actions: [
+                    {
+                        type: 'RecordDealTile',
+                        seat: 0,
+                        tile: '1m'
+                    },
+                    {
+                        type: 'RecordLiuJu',
+                        liujuType: 1,
+                        seat: 0
+                    }
+                ]
+            }
+        ]
+    }
+
+    const encoded = decoder.encodeGameRecord(gameWithLiuJu, false)
+    const decoded = decoder.decodeGameRecord(encoded)
+    assert.strictEqual(decoded.uuid, gameWithLiuJu.uuid)
+    assert.strictEqual(decoded.rounds.length, 1)
+    const round0 = decoded.rounds[0]
+    assert.ok(round0 !== undefined)
+    assert.strictEqual(round0.actions.length, 2)
+    assert.strictEqual(round0.actions[1]?.type, 'RecordLiuJu')
+    const liujuAction = round0.actions[1] as MajsoulRecordLiuJu
+    assert.strictEqual(liujuAction.liujuType, 1)
+    assert.strictEqual(liujuAction.seat, 0)
 })
 
 test('LiqiBinaryDecoder - Exported from packages/mahjong-core/src/index.ts barrel', () => {

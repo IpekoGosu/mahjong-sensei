@@ -12,7 +12,8 @@ import {
     MajsoulRecordBaBei,
     MajsoulRecordHule,
     MajsoulHuleItem,
-    MajsoulRecordNoTile
+    MajsoulRecordNoTile,
+    MajsoulRecordLiuJu
 } from './types'
 
 export interface LiqiWrapper {
@@ -269,6 +270,8 @@ export class LiqiBinaryDecoder {
                 return this.decodeRecordHule(payload)
             case 'RecordNoTile':
                 return this.decodeRecordNoTile(payload)
+            case 'RecordLiuJu':
+                return this.decodeRecordLiuJu(payload)
             default:
                 throw new Error(`Unsupported action type: ${name}`)
         }
@@ -306,6 +309,9 @@ export class LiqiBinaryDecoder {
                 break
             case 'RecordNoTile':
                 rawData = this.encodeRecordNoTile(action)
+                break
+            case 'RecordLiuJu':
+                rawData = this.encodeRecordLiuJu(action)
                 break
         }
 
@@ -1191,6 +1197,57 @@ export class LiqiBinaryDecoder {
             this.writePackedVarints(1, record.tenpaiSeats),
             this.writePackedSignedVarints(2, record.deltaScores)
         ]
+        return this.concatBuffers(chunks)
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected decodeRecordLiuJu(data: Uint8Array): MajsoulRecordLiuJu {
+        const fields = this.parseProtoFields(data)
+        let liujuType: number | undefined = undefined
+        let seat: SeatIndex | undefined = undefined
+
+        for (const field of fields) {
+            if (field.fieldNumber === 1 && field.varintValue !== undefined) {
+                liujuType = Number(field.varintValue)
+            } else if (field.fieldNumber === 3 && field.wireType === 0 && field.varintValue !== undefined) {
+                seat = this.toSeatIndex(Number(field.varintValue))
+            } else if (field.fieldNumber === 2 && field.wireType === 0 && field.varintValue !== undefined && seat === undefined) {
+                seat = this.toSeatIndex(Number(field.varintValue))
+            }
+        }
+
+        if (liujuType !== undefined && seat !== undefined) {
+            return {
+                type: 'RecordLiuJu',
+                liujuType,
+                seat
+            }
+        } else if (liujuType !== undefined) {
+            return {
+                type: 'RecordLiuJu',
+                liujuType
+            }
+        } else if (seat !== undefined) {
+            return {
+                type: 'RecordLiuJu',
+                seat
+            }
+        }
+
+        return {
+            type: 'RecordLiuJu'
+        }
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected encodeRecordLiuJu(record: MajsoulRecordLiuJu): Uint8Array {
+        const chunks: Uint8Array[] = []
+        if (record.liujuType !== undefined) {
+            chunks.push(this.writeVarintField(1, record.liujuType))
+        }
+        if (record.seat !== undefined) {
+            chunks.push(this.writeVarintField(3, record.seat))
+        }
         return this.concatBuffers(chunks)
     }
 

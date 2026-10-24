@@ -1,4 +1,6 @@
-import { SeatIndex } from '@mahjong-sensei/types'
+import { SeatIndex, MajsoulRecordLiuJu } from '@mahjong-sensei/types'
+
+export { MajsoulRecordLiuJu }
 
 export interface MajsoulPlayerInfo {
     readonly accountId: number
@@ -90,6 +92,7 @@ export type MajsoulActionRecord =
     | MajsoulRecordBaBei
     | MajsoulRecordHule
     | MajsoulRecordNoTile
+    | MajsoulRecordLiuJu
 
 export type MajsoulRoundAction = MajsoulActionRecord
 

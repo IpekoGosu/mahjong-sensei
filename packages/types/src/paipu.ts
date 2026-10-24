@@ -102,3 +102,10 @@ export interface BatchAsyncImportResponse {
     readonly total: number
 }
 
+export interface MajsoulRecordLiuJu {
+    readonly type: 'RecordLiuJu'
+    readonly liujuType?: number // 1: 구종구패, 2: 사풍연타, 3: 사가리치, 4: 사간산 등
+    readonly seat?: SeatIndex
+}
+
+

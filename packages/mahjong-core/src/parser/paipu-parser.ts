@@ -11,7 +11,8 @@ import {
     MajsoulGameRecord,
     MajsoulRoundRecord,
     MajsoulRecordHule,
-    MajsoulRecordNoTile
+    MajsoulRecordNoTile,
+    MajsoulRecordLiuJu
 } from './types'
 import { LuckEvaluator } from '../metrics/luck-evaluator'
 import { SkillEvaluator } from '../metrics/skill-evaluator'
@@ -198,6 +199,7 @@ export class PaipuParser {
 
         let huleAction: MajsoulRecordHule | null = null
         let noTileAction: MajsoulRecordNoTile | null = null
+        let liuJuAction: MajsoulRecordLiuJu | null = null
 
         for (const action of round.actions) {
             step++
@@ -266,6 +268,13 @@ export class PaipuParser {
                 actions.push({
                     step,
                     seat: 0,
+                    type: 'ryukyoku'
+                })
+            } else if (action.type === 'RecordLiuJu') {
+                liuJuAction = action
+                actions.push({
+                    step,
+                    seat: action.seat ?? 0,
                     type: 'ryukyoku'
                 })
             }
@@ -341,6 +350,25 @@ export class PaipuParser {
             roundResult = {
                 type: 'ryukyoku',
                 deltaScores: noTileAction.deltaScores,
+                summaryKo
+            }
+        } else if (liuJuAction) {
+            let reason = '중도유국'
+            if (liuJuAction.liujuType === 1) {
+                reason = '구종구패'
+            } else if (liuJuAction.liujuType === 2) {
+                reason = '사풍연타'
+            } else if (liuJuAction.liujuType === 3) {
+                reason = '사간산'
+            } else if (liuJuAction.liujuType === 4) {
+                reason = '사가리치'
+            } else if (liuJuAction.liujuType !== undefined) {
+                reason = `중도유국 (${liuJuAction.liujuType})`
+            }
+            const summaryKo = `유국 (${reason})`
+            roundResult = {
+                type: 'ryukyoku',
+                deltaScores: [0, 0, 0, 0],
                 summaryKo
             }
         }
