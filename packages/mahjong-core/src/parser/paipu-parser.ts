@@ -128,7 +128,7 @@ export class PaipuParser {
                     isDamaten: m.isDamaten
                 }))
 
-            parsedRounds.push(this.transformRound(round, rIdx, currentRoundMetrics))
+            parsedRounds.push(this.transformRound(round, rIdx, currentRoundMetrics, playerCount))
         }
 
         // Calculate final scores and ranks
@@ -187,9 +187,11 @@ export class PaipuParser {
     private transformRound(
         round: MajsoulRoundRecord,
         roundIndex: number,
-        roundMetrics?: readonly PaipuRoundMetricSummary[]
+        roundMetrics?: readonly PaipuRoundMetricSummary[],
+        playerCount: number = 4
     ): PaipuRound {
         /*_ GEMINI THINKING _*/
+        const is3P = playerCount === 3 || ((round.header.hands[3]?.length ?? 0) === 0 && (round.header.hands[0]?.length ?? 0) > 0)
         const roundNames = ['동1국', '동2국', '동3국', '동4국', '남1국', '남2국', '남3국', '남4국']
         const name = roundNames[round.header.ju] ?? `동${round.header.ju + 1}국`
 
@@ -362,13 +364,15 @@ export class PaipuParser {
                 reason = '사간산'
             } else if (liuJuAction.liujuType === 4) {
                 reason = '사가리치'
+            } else if (liuJuAction.liujuType === 5) {
+                reason = '삼가화료'
             } else if (liuJuAction.liujuType !== undefined) {
                 reason = `중도유국 (${liuJuAction.liujuType})`
             }
             const summaryKo = `유국 (${reason})`
             roundResult = {
                 type: 'ryukyoku',
-                deltaScores: [0, 0, 0, 0],
+                deltaScores: is3P ? [0, 0, 0] : [0, 0, 0, 0],
                 summaryKo
             }
         }

@@ -211,7 +211,59 @@ test('PaipuParser - Parse game with RecordLiuJu (사간산, 사가리치, and fa
     const parsedType4 = parser.parseGameRecord(buildGame(4))
     assert.strictEqual(parsedType4.detail.rounds[0]?.result?.summaryKo, '유국 (사가리치)')
 
+    const parsedType5 = parser.parseGameRecord(buildGame(5))
+    assert.strictEqual(parsedType5.detail.rounds[0]?.result?.summaryKo, '유국 (삼가화료)')
+
     const parsedFallback = parser.parseGameRecord(buildGame(undefined))
     assert.strictEqual(parsedFallback.detail.rounds[0]?.result?.summaryKo, '유국 (중도유국)')
+})
+
+test('PaipuParser - Parse 3P (Sanma) game with RecordLiuJu produces 3-element deltaScores', () => {
+    const parser = new PaipuParser()
+    const sanmaGame: MajsoulGameRecord = {
+        uuid: 'test-sanma-liuju-001',
+        roomType: '3인 남풍전',
+        timestamp: 1690000000,
+        players: [
+            { accountId: 10001, nickname: 'PlayerA', seat: 0, level: 1 },
+            { accountId: 10002, nickname: 'PlayerB', seat: 1, level: 1 },
+            { accountId: 10003, nickname: 'PlayerC', seat: 2, level: 1 }
+        ],
+        rounds: [
+            {
+                header: {
+                    type: 'RecordNewRound',
+                    chang: 0,
+                    ju: 0,
+                    ben: 0,
+                    liqi: 0,
+                    scores: [35000, 35000, 35000, 0],
+                    dora: '1m',
+                    hands: [
+                        ['1m', '9m', '1p', '9p', '1s', '9s', '1z', '2z', '3z', '4z', '5z', '6z', '7z'],
+                        ['2m', '3m', '4m', '5m', '6m', '7m', '8m', '2p', '3p', '4p', '2s', '3s', '4s'],
+                        ['2m', '3m', '4m', '5m', '6m', '7m', '8m', '2p', '3p', '4p', '2s', '3s', '4s'],
+                        []
+                    ]
+                },
+                actions: [
+                    {
+                        type: 'RecordLiuJu',
+                        liujuType: 1,
+                        seat: 0
+                    }
+                ]
+            }
+        ]
+    }
+
+    const parsed = parser.parseGameRecord(sanmaGame)
+    const round0 = parsed.detail.rounds[0]
+    assert.ok(round0 !== undefined)
+    assert.ok(round0.result !== undefined)
+    assert.strictEqual(round0.result.type, 'ryukyoku')
+    assert.strictEqual(round0.result.summaryKo, '유국 (구종구패)')
+    assert.deepStrictEqual(round0.result.deltaScores, [0, 0, 0])
+    assert.strictEqual(round0.result.deltaScores?.length, 3)
 })
 
