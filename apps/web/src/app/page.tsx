@@ -6,8 +6,7 @@ import {
     RollingWindowSize,
     RollingWindowStats,
     PerformanceQuadrant,
-    GameCoachingReport,
-    BatchImportPaipuResult
+    GameCoachingReport
 } from '@mahjong-sensei/types'
 import {
     TrendingUp,
@@ -24,7 +23,6 @@ import {
     HelpCircle,
     Clock,
     Share2,
-    Upload,
     X,
     Check,
     AlertCircle,
@@ -32,6 +30,8 @@ import {
 } from 'lucide-react'
 import { TierBenchmarkShareCard } from '../components/TierBenchmarkShareCard'
 import { PaipuRoundInspectorModal } from '../components/PaipuRoundInspectorModal'
+import { PaipuBatchModal } from '../components/PaipuBatchModal'
+
 
 import {
     LineChart,
@@ -55,7 +55,6 @@ export default function DashboardPage(): React.ReactElement {
     const [stats, setStats] = useState<RollingWindowStats | null>(null)
     const [paipuInput, setPaipuInput] = useState<string>('')
     const [batchModalOpen, setBatchModalOpen] = useState<boolean>(false)
-    const [batchInput, setBatchInput] = useState<string>('')
     const [syncing, setSyncing] = useState<boolean>(false)
     const [importing, setImporting] = useState<boolean>(false)
     const [statusMessage, setStatusMessage] = useState<string>('')
@@ -64,8 +63,6 @@ export default function DashboardPage(): React.ReactElement {
     const [coachingReport, setCoachingReport] = useState<GameCoachingReport | null>(null)
     const [coachingLoading, setCoachingLoading] = useState<boolean>(false)
     const [coachingError, setCoachingError] = useState<string | null>(null)
-    const [importTab, setImportTab] = useState<'batch' | 'file'>('batch')
-    const [selectedFile, setSelectedFile] = useState<File | null>(null)
     const [selectedInspectorGameId, setSelectedInspectorGameId] = useState<string | null>(null)
     const [isMounted, setIsMounted] = useState<boolean>(false)
     const [, startTransition] = useTransition()
@@ -171,118 +168,6 @@ export default function DashboardPage(): React.ReactElement {
         }
     }
 
-    const handleBatchImport = async (): Promise<void> => {
-        const rawLines = batchInput.split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
-        const uniqueLines = Array.from(new Set(rawLines))
-        if (uniqueLines.length === 0) {
-            return
-        }
-
-        setImporting(true)
-        setStatusMessage(`${uniqueLines.length}개의 실제 패보 일괄 등록 및 정밀 분석 중...`)
-
-        try {
-            const res = await fetch(`${apiUrl}/paipu/import-batch`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ inputs: uniqueLines })
-            })
-
-            if (res.ok) {
-                const data = (await res.json()) as BatchImportPaipuResult
-                const parts: string[] = []
-                if (data.imported > 0) {
-                    parts.push(`신규 등록 ${data.imported}건`)
-                }
-                if (data.existing > 0) {
-                    parts.push(`기존 등록 ${data.existing}건`)
-                }
-                if (data.failed > 0) {
-                    parts.push(`실패 ${data.failed}건`)
-                }
-                if (parts.length === 0) {
-                    parts.push('처리 내역 없음')
-                }
-
-                const isAllFailed = data.imported === 0 && data.existing === 0 && data.failed > 0
-                const isPartialFailed = data.failed > 0
-                const icon = isAllFailed ? '❌' : isPartialFailed ? '⚠️' : '✅'
-
-                setStatusMessage(`${icon} 총 ${data.total}개 중 ${parts.join(', ')} 처리되었습니다.`)
-
-                // 하나라도 신규 또는 기존 등록이 성공했을 때만 모달을 닫고 입력을 초기화
-                if (data.imported > 0 || data.existing > 0) {
-                    setBatchInput('')
-                    setBatchModalOpen(false)
-                    void fetchStats(accountId, windowSize, gameMode)
-                }
-            } else {
-                setStatusMessage('⚠️ 패보 일괄 등록 중 일부 실패가 발생했습니다.')
-            }
-        } catch {
-            setStatusMessage('⚠️ 백엔드 서버 연결에 실패했습니다.')
-        } finally {
-            setImporting(false)
-        }
-    }
-
-    /*_ GEMINI THINKING _*/
-    const handleFileUpload = async (): Promise<void> => {
-        if (!selectedFile) {
-            return
-        }
-
-        setImporting(true)
-        setStatusMessage(`파일 업로드 및 패보 디코딩 중... (${selectedFile.name})`)
-
-        try {
-            const isJson = selectedFile.name.toLowerCase().endsWith('.json')
-            let content = ''
-            let format: 'json' | 'base64' = 'json'
-
-            if (isJson) {
-                content = await selectedFile.text()
-                format = 'json'
-            } else {
-                content = await new Promise<string>((resolve, reject) => {
-                    const reader = new FileReader()
-                    reader.onload = () => {
-                        const result = reader.result
-                        if (typeof result === 'string') {
-                            const base64Data = result.split(',')[1] ?? ''
-                            resolve(base64Data)
-                        } else {
-                            reject(new Error('파일 인코딩 실패'))
-                        }
-                    }
-                    reader.onerror = () => reject(reader.error)
-                    reader.readAsDataURL(selectedFile)
-                })
-                format = 'base64'
-            }
-
-            const res = await fetch(`${apiUrl}/paipu/upload`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content, format })
-            })
-
-            if (res.ok) {
-                const data = (await res.json()) as { readonly success: boolean; readonly gameId: string }
-                setStatusMessage(`✅ 파일 패보(${data.gameId})가 성공적으로 디코딩 및 등록되었습니다!`)
-                setSelectedFile(null)
-                setBatchModalOpen(false)
-                fetchStats(accountId, windowSize, gameMode)
-            } else {
-                const errData = (await res.json().catch(() => null)) as { readonly message?: string } | null
-                setStatusMessage(`⚠️ 패보 업로드 실패: ${errData?.message ?? '형식이 올바르지 않습니다.'}`)
-            }
-        } catch {
-            setStatusMessage('⚠️ 패보 파일 처리 중 오류가 발생했습니다.')
-        } finally {
-            setImporting(false)
-        }
-    }
 
     const handleOpenCoaching = async (gameId: string): Promise<void> => {
         setCoachingGameId(gameId)
@@ -915,127 +800,18 @@ export default function DashboardPage(): React.ReactElement {
                 </div>
             </section>
 
-            {/* Batch & File Upload Modal */}
-            {batchModalOpen && (
-                <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-                    <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 space-y-4 shadow-2xl">
-                        <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                            <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                                <FileText className="w-5 h-5 text-amber-500" />
-                                실제 작혼 패보 등록 & 업로드
-                            </h3>
-                            <button
-                                onClick={() => setBatchModalOpen(false)}
-                                className="text-slate-400 hover:text-white text-sm cursor-pointer"
-                            >
-                                ✕
-                            </button>
-                        </div>
-
-                        {/* Tabs: Text Batch vs File Upload */}
-                        <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
-                            <button
-                                onClick={() => setImportTab('batch')}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                                    importTab === 'batch'
-                                        ? 'bg-amber-600 text-white font-bold'
-                                        : 'text-slate-400 hover:text-slate-200'
-                                }`}
-                            >
-                                링크 / UUID 일괄 입력
-                            </button>
-                            <button
-                                onClick={() => setImportTab('file')}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer flex items-center gap-1.5 ${
-                                    importTab === 'file'
-                                        ? 'bg-amber-600 text-white font-bold'
-                                        : 'text-slate-400 hover:text-slate-200'
-                                }`}
-                            >
-                                <Upload className="w-3.5 h-3.5" />
-                                파일 업로드 (.json / .pb)
-                            </button>
-                        </div>
-
-                        {importTab === 'batch' ? (
-                            <>
-                                <p className="text-xs text-slate-400 leading-relaxed">
-                                    작혼 인게임 [패보] 메뉴에서 최근 대국의 링크 또는 UUID를 한 줄에 하나씩 붙여넣으세요.
-                                    (예: <code>241015-xxxx-xxxx-...</code>)
-                                </p>
-                                <textarea
-                                    rows={8}
-                                    placeholder="https://mahjongsoul.game.yo-star.com/?paipu=241015-xxxx&#10;241014-yyyy-yyyy...&#10;241013-zzzz-zzzz..."
-                                    value={batchInput}
-                                    onChange={(e) => setBatchInput(e.target.value)}
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm font-mono text-slate-200 focus:outline-none focus:border-amber-500 resize-none"
-                                />
-                                <div className="flex items-center justify-end gap-3 pt-2">
-                                    <button
-                                        onClick={() => setBatchModalOpen(false)}
-                                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors cursor-pointer"
-                                    >
-                                        취소
-                                    </button>
-                                    <button
-                                        onClick={handleBatchImport}
-                                        disabled={importing || !batchInput.trim()}
-                                        className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-semibold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2"
-                                    >
-                                        {importing && <RotateCw className="w-4 h-4 animate-spin" />}
-                                        일괄 분석 & 등록
-                                    </button>
-                                </div>
-                            </>
-                        ) : (
-                            <div className="space-y-4">
-                                <p className="text-xs text-slate-400 leading-relaxed">
-                                    작혼 웹/모바일 클라이언트에서 추출한 JSON 패보 파일 또는 Protobuf(.pb) 바이너리 파일을 직접 업로드하세요.
-                                </p>
-                                <label className="border-2 border-dashed border-slate-700 hover:border-amber-500/80 rounded-xl p-6 flex flex-col items-center justify-center gap-3 cursor-pointer transition-colors bg-slate-950/50">
-                                    <Upload className="w-8 h-8 text-amber-400" />
-                                    <span className="text-sm font-medium text-slate-200">
-                                        {selectedFile ? selectedFile.name : '클릭하여 파일 선택 또는 파일 드래그'}
-                                    </span>
-                                    <span className="text-xs text-slate-500">
-                                        지원 형식: .json, .pb, .bin (최대 10MB)
-                                    </span>
-                                    <input
-                                        type="file"
-                                        accept=".json,.pb,.bin"
-                                        className="hidden"
-                                        onChange={(e) => {
-                                            const file = e.target.files?.[0]
-                                            if (file) {
-                                                setSelectedFile(file)
-                                            }
-                                        }}
-                                    />
-                                </label>
-                                <div className="flex items-center justify-end gap-3 pt-2">
-                                    <button
-                                        onClick={() => {
-                                            setSelectedFile(null)
-                                            setBatchModalOpen(false)
-                                        }}
-                                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-sm font-medium transition-colors cursor-pointer"
-                                    >
-                                        취소
-                                    </button>
-                                    <button
-                                        onClick={handleFileUpload}
-                                        disabled={importing || !selectedFile}
-                                        className="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-semibold transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2"
-                                    >
-                                        {importing && <RotateCw className="w-4 h-4 animate-spin" />}
-                                        패보 디코딩 & 등록
-                                    </button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
+            {/* Batch & Protobuf Import Modal */}
+            <PaipuBatchModal
+                isOpen={batchModalOpen}
+                onClose={() => setBatchModalOpen(false)}
+                apiUrl={apiUrl}
+                onComplete={() => {
+                    void fetchStats(accountId, windowSize, gameMode)
+                }}
+                onNotify={(msg) => {
+                    setStatusMessage(msg)
+                }}
+            />
 
             {/* AI Coaching Report Modal */}
             {coachingGameId && (

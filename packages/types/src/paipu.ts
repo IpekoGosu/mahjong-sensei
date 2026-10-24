@@ -85,3 +85,20 @@ export interface BatchImportPaipuResult {
     readonly failed: number
     readonly gameIds: readonly string[]
 }
+
+export interface BatchPaipuJobStatus {
+    readonly jobId: string
+    readonly total: number
+    readonly completed: number
+    readonly failed: number
+    readonly progressPercent: number
+    readonly isFinished: boolean
+    readonly errors: readonly string[]
+    readonly gameIds?: readonly string[]
+}
+
+export interface BatchAsyncImportResponse {
+    readonly jobId: string
+    readonly total: number
+}
+
