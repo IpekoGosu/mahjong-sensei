@@ -1,3 +1,5 @@
+'use client'
+
 import React, { useState, useEffect, useRef } from 'react'
 import { RotateCw, Upload, X, Check, AlertCircle } from 'lucide-react'
 import { BatchPaipuJobStatus, BatchAsyncImportResponse } from '@mahjong-sensei/types'
@@ -25,7 +27,7 @@ export const PaipuBatchModal: React.FC<PaipuBatchModalProps> = ({
     const [jobStatus, setJobStatus] = useState<BatchPaipuJobStatus | null>(null)
     const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-    const pollTimerRef = useRef<NodeJS.Timeout | null>(null)
+    const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
     const clearPollTimer = (): void => {
         if (pollTimerRef.current !== null) {

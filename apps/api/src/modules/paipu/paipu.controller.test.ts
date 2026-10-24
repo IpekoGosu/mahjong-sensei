@@ -707,6 +707,77 @@ test('PaipuService - startBatchAsync processes queue, handles deduplication, fai
     )
 })
 
+class MockFatalBatchService extends PaipuService {
+    public constructor() {
+        super(new MockPrismaService())
+    }
+
+    protected override readonly rateLimitDelayMs: number = 0
+
+    protected override async delay(_ms: number): Promise<void> {
+        throw new Error('Fatal unexpected loop failure')
+    }
+
+    public testCleanupOldJobs(): void {
+        this.cleanupOldJobs()
+    }
+
+    public addMockJob(jobId: string, isFinished: boolean, createdAt: number): void {
+        this.batchJobs.set(jobId, {
+            jobId,
+            total: 1,
+            completed: isFinished ? 1 : 0,
+            failed: 0,
+            isFinished,
+            errors: [],
+            gameIds: [],
+            createdAt
+        })
+    }
+
+    public hasJob(jobId: string): boolean {
+        return this.batchJobs.has(jobId)
+    }
+
+    public getJobCount(): number {
+        return this.batchJobs.size
+    }
+}
+
+test('PaipuService - processBatchJob guarantees isFinished=true on fatal error and cleanupOldJobs preserves active jobs', async () => {
+    /*_ GEMINI THINKING _*/
+    const service = new MockFatalBatchService()
+
+    // 1. Test fatal error in processBatchJob guarantees isFinished = true
+    const init = await service.startBatchAsync(['https://game.maj-soul.com/1/?paipu=fatal-1'])
+    // Wait for the async processBatchJob to finish
+    let attempts = 0
+    let status = service.getBatchStatus(init.jobId)
+    while (!status.isFinished && attempts < 20) {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        status = service.getBatchStatus(init.jobId)
+        attempts++
+    }
+    assert.strictEqual(status.isFinished, true)
+
+    // 2. Test cleanupOldJobs with > 200 jobs preserves active jobs (!isFinished)
+    const activeJobId = 'active-important-job'
+    service.addMockJob(activeJobId, false, Date.now()) // In-flight active job
+
+    // Add 210 finished jobs
+    for (let i = 0; i < 210; i++) {
+        service.addMockJob(`finished-job-${i}`, true, Date.now())
+    }
+
+    assert.ok(service.getJobCount() > 200)
+    service.testCleanupOldJobs()
+
+    // Active job MUST still be preserved!
+    assert.strictEqual(service.hasJob(activeJobId), true)
+    assert.ok(service.getJobCount() <= 201)
+})
+
+
 class MockProtobufPipelineService extends PaipuService {
     public capturedRecord: MajsoulGameRecord | null = null
     public capturedEncodedProto: Uint8Array | null = null

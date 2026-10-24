@@ -430,49 +430,54 @@ export class PaipuService {
             return
         }
 
-        const seenUuids = new Set<string>()
+        try {
+            const seenUuids = new Set<string>()
 
-        for (let i = 0; i < urls.length; i++) {
-            const url = urls[i]
-            if (url === undefined) {
-                continue
-            }
-
-            if (i > 0 && this.rateLimitDelayMs > 0) {
-                await this.delay(this.rateLimitDelayMs)
-            }
-
-            const trimmed = url.trim()
-            if (!trimmed) {
-                job.failed++
-                job.errors.push(`URL ${i + 1}: 빈 입력값입니다.`)
-                continue
-            }
-
-            try {
-                const uuid = this.extractUuid(trimmed)
-                if (seenUuids.has(uuid)) {
-                    job.completed++
+            for (let i = 0; i < urls.length; i++) {
+                const url = urls[i]
+                if (url === undefined) {
                     continue
                 }
-                seenUuids.add(uuid)
 
-                const res = await this.importPaipu(trimmed)
-                if (res.success) {
-                    job.completed++
-                    job.gameIds.push(res.gameId)
-                } else {
-                    job.failed++
-                    job.errors.push(`대국 저장 실패 (${trimmed})`)
+                if (i > 0 && this.rateLimitDelayMs > 0) {
+                    await this.delay(this.rateLimitDelayMs)
                 }
-            } catch (err) {
-                job.failed++
-                const msg = err instanceof Error ? err.message : String(err)
-                job.errors.push(`대국 처리 실패 (${trimmed}): ${msg}`)
-            }
-        }
 
-        job.isFinished = true
+                const trimmed = url.trim()
+                if (!trimmed) {
+                    job.failed++
+                    job.errors.push(`URL ${i + 1}: 빈 입력값입니다.`)
+                    continue
+                }
+
+                try {
+                    const uuid = this.extractUuid(trimmed)
+                    if (seenUuids.has(uuid)) {
+                        job.completed++
+                        continue
+                    }
+                    seenUuids.add(uuid)
+
+                    const res = await this.importPaipu(trimmed)
+                    if (res.success) {
+                        job.completed++
+                        job.gameIds.push(res.gameId)
+                    } else {
+                        job.failed++
+                        job.errors.push(`대국 저장 실패 (${trimmed})`)
+                    }
+                } catch (err) {
+                    job.failed++
+                    const msg = err instanceof Error ? err.message : String(err)
+                    job.errors.push(`대국 처리 실패 (${trimmed}): ${msg}`)
+                }
+            }
+        } catch (fatalErr) {
+            const msg = fatalErr instanceof Error ? fatalErr.message : String(fatalErr)
+            job.errors.push(`치명적 배치 처리 오류: ${msg}`)
+        } finally {
+            job.isFinished = true
+        }
     }
 
     protected cleanupOldJobs(): void {
@@ -484,12 +489,12 @@ export class PaipuService {
             }
         }
         if (this.batchJobs.size > 200) {
-            const keys = Array.from(this.batchJobs.keys())
-            const toRemove = keys.length - 200
-            for (let i = 0; i < toRemove; i++) {
-                const key = keys[i]
-                if (key !== undefined) {
-                    this.batchJobs.delete(key)
+            for (const [id, job] of this.batchJobs.entries()) {
+                if (this.batchJobs.size <= 200) {
+                    break
+                }
+                if (job.isFinished) {
+                    this.batchJobs.delete(id)
                 }
             }
         }
