@@ -266,6 +266,8 @@ test('AnalysisService - Aggregate 100 games rolling window with slump and trend 
     assert.ok(stats.winRate !== undefined && stats.winRate > 0)
     assert.ok(stats.dealInRate !== undefined && stats.dealInRate > 0)
     assert.ok(stats.styleDiagnosis !== undefined)
+    assert.ok(stats.tiltDiagnosis !== undefined)
+    assert.strictEqual(stats.tiltDiagnosis.symptoms.length, 3)
 })
 
 test('AnalysisService - Zero denominator fallbacks for damaten, initiative, and uradora rates', async () => {
@@ -399,6 +401,53 @@ test('AnalysisService - getCoachingReport generates synthetic coaching report fo
     assert.strictEqual(report.criticalMistakes[1]?.mistakeCategory, 'UKEIRE_LOSS')
     assert.ok(report.overallSummaryKo.includes('실력 점수가 난조'))
     assert.ok(report.actionableAdviceKo.length > 0)
+})
+
+test('AnalysisService - getCoachingReport reflects DANGER_PUSH_LOW_EV and tiltDiagnosis in 3P', async () => {
+    const service = new MockAnalysisService()
+
+    service.mockGame = {
+        id: 'synthetic-3p-tilt-game',
+        roomType: '3인 옥탁 반장전',
+        rawProtobuf: null,
+        participants: [
+            {
+                seat: 0,
+                finalScore: 10000,
+                finalRank: 3,
+                luckScore: 25.0,
+                skillScore: 35.0,
+                player: { accountId: 50001, nickname: '틸트수련생' }
+            }
+        ],
+        rounds: [
+            {
+                id: 'round-3p-1',
+                roundIndex: 0,
+                roundMetrics: [
+                    {
+                        seat: 0,
+                        startShanten: 3.0,
+                        dealInScore: 12000,
+                        tileEfficiency: 0.85,
+                        luckScore: 25,
+                        skillScore: 35,
+                        isWin: false,
+                        isRiichi: false
+                    }
+                ]
+            }
+        ]
+    }
+
+    const report = await service.getCoachingReport('synthetic-3p-tilt-game', 50001)
+
+    assert.strictEqual(report.is3P, true)
+    assert.strictEqual(report.criticalMistakes.length, 1)
+    assert.strictEqual(report.criticalMistakes[0]?.mistakeCategory, 'DANGER_PUSH_LOW_EV')
+    assert.ok((report.criticalMistakes[0]?.evLoss ?? 0) >= 2500)
+    assert.ok(report.overallSummaryKo.includes('치명적 EV Loss 스파이크'))
+    assert.ok(report.actionableAdviceKo.some((a) => a.includes('만관 확정 리치')))
 })
 
 test('AnalysisService - getCoachingReport analyzes rawProtobuf game with CoachingAdvisor', async () => {

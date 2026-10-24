@@ -32,6 +32,7 @@ import {
 } from 'lucide-react'
 import { TierBenchmarkShareCard } from '../components/TierBenchmarkShareCard'
 import { PaipuRoundInspectorModal } from '../components/PaipuRoundInspectorModal'
+import { TiltAlertWidget } from '../components/TiltAlertWidget'
 
 import {
     LineChart,
@@ -326,6 +327,16 @@ export default function DashboardPage(): React.ReactElement {
                 return {
                     label: '↩️ 샹텐수 후퇴 타패',
                     badgeClass: 'bg-purple-500/20 text-purple-400 border-purple-500/30'
+                }
+            case 'DANGER_PUSH_LOW_EV':
+                return {
+                    label: '⚡ 치명적 저EV 푸시 (만관 리치 위험)',
+                    badgeClass: 'bg-rose-500/25 text-rose-300 border-rose-500/40'
+                }
+            case 'TIMID_FOLD_HIGH_EV':
+                return {
+                    label: '🛡️ 과도한 방총 공포 (고타점 텐파이 포기)',
+                    badgeClass: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30'
                 }
             default:
                 return {
@@ -840,6 +851,13 @@ export default function DashboardPage(): React.ReactElement {
                 )
             })()}
 
+            {/* Tilt Alert Section */}
+            {currentStats.tiltDiagnosis && (
+                <section>
+                    <TiltAlertWidget tiltDiagnosis={currentStats.tiltDiagnosis} variant="dashboard" />
+                </section>
+            )}
+
             {/* Charts Section */}
             <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 {/* Rolling Trend Chart */}
@@ -1248,6 +1266,11 @@ export default function DashboardPage(): React.ReactElement {
                                     </p>
                                 </div>
 
+                                {/* Tilt Alert Engine in Coaching Modal */}
+                                {coachingReport.tiltDiagnosis && (
+                                    <TiltAlertWidget tiltDiagnosis={coachingReport.tiltDiagnosis} variant="modal" />
+                                )}
+
                                 {/* Actionable Advice Checklist */}
                                 {coachingReport.actionableAdviceKo.length > 0 && (
                                     <div className="space-y-2">
@@ -1293,9 +1316,20 @@ export default function DashboardPage(): React.ReactElement {
                                                                     동{mistake.roundIndex + 1}국 · {mistake.turnNumber}순
                                                                 </span>
                                                             </div>
-                                                            <span className="text-xs font-mono text-rose-400 font-bold">
-                                                                실수 심각도 {mistake.severityScore}/100
-                                                            </span>
+                                                            <div className="flex items-center gap-2">
+                                                                {mistake.evLoss !== undefined && mistake.evLoss > 0 && (
+                                                                    <span className={`px-2.5 py-0.5 rounded-md text-xs font-mono font-bold border ${
+                                                                        mistake.evLoss >= 2500
+                                                                            ? 'bg-rose-500/25 text-rose-300 border-rose-500/40 animate-pulse'
+                                                                            : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                                                    }`}>
+                                                                        {mistake.evLoss >= 2500 ? '🔥 치명적 EV 손실' : 'EV 손실'} -{mistake.evLoss.toLocaleString()}점
+                                                                    </span>
+                                                                )}
+                                                                <span className="text-xs font-mono text-rose-400 font-bold">
+                                                                    심각도 {mistake.severityScore}/100
+                                                                </span>
+                                                            </div>
                                                         </div>
 
                                                         {/* Tile Comparison */}

@@ -119,6 +119,7 @@ export interface RollingWindowStats {
     readonly uradoraRate?: number
     readonly styleDiagnosis?: StyleDiagnosis
     readonly slumpSeverity?: SlumpSeverityResult
+    readonly tiltDiagnosis?: TiltDiagnosisResult | undefined
 }
 
 export type TierKey = 'NOVICE_ADEPT' | 'EXPERT' | 'MASTER' | 'SAINT'
@@ -166,6 +167,45 @@ export type MistakeCategory =
     | 'UKEIRE_LOSS'
     | 'RECKLESS_PUSH_DEAL_IN'
     | 'DANGEROUS_MUSUJI_PUSH'
+    | 'DANGER_PUSH_LOW_EV'
+    | 'TIMID_FOLD_HIGH_EV'
+
+export type TiltSeverity = 'NORMAL' | 'CAUTION' | 'WARNING' | 'CRITICAL'
+
+export interface TiltSymptom {
+    readonly type: 'DORA_NEGLECT' | 'BAD_WAIT_RIICHI' | 'HALF_HEARTED_MAWASHIUCHI'
+    readonly label: string
+    readonly detected: boolean
+    readonly baselineValue: number
+    readonly recentValue: number
+    readonly delta: number
+    readonly description: string
+}
+
+export interface TiltDiagnosisResult {
+    readonly isTilt: boolean
+    readonly tiltScore: number
+    readonly severity: TiltSeverity
+    readonly title: string
+    readonly summary: string
+    readonly advice: string
+    readonly symptoms: readonly TiltSymptom[]
+}
+
+export interface TiltMetricsComparison {
+    readonly avgWinScore: number
+    readonly badWaitRiichiRate: number
+    readonly halfHeartedDealInRate: number
+    readonly doraDischargeRate?: number
+    readonly earlyFuroRate?: number
+}
+
+export interface TiltEvaluationInput {
+    readonly baseline: TiltMetricsComparison
+    readonly recent: TiltMetricsComparison
+    readonly slumpGameCount?: number
+    readonly gameMode?: GameMode
+}
 
 export interface CriticalMistakeHighlight {
     readonly roundIndex: number
@@ -179,6 +219,7 @@ export interface CriticalMistakeHighlight {
     readonly mistakeCategory: MistakeCategory
     readonly severityScore: number
     readonly coachingMessageKo: string
+    readonly evLoss?: number | undefined
 }
 
 export interface GameCoachingReport {
@@ -189,5 +230,6 @@ export interface GameCoachingReport {
     readonly criticalMistakes: readonly CriticalMistakeHighlight[]
     readonly overallSummaryKo: string
     readonly actionableAdviceKo: readonly string[]
+    readonly tiltDiagnosis?: TiltDiagnosisResult | undefined
 }
 

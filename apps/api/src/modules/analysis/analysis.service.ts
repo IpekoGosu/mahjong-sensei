@@ -10,7 +10,8 @@ import {
     SeatIndex,
     GameCoachingReport,
     CriticalMistakeHighlight,
-    MistakeCategory
+    MistakeCategory,
+    TiltDiagnosisResult
 } from '@mahjong-sensei/types'
 import {
     MetricCalculator,
@@ -372,6 +373,23 @@ export class AnalysisService {
             ranks: participants.map((p) => p.finalRank)
         })
 
+        const baseline = mode === '3p' ? StyleEvaluator.DEFAULT_3P_BASELINE : StyleEvaluator.DEFAULT_4P_BASELINE
+        const scoreDropFactor = Math.max(0, (100 - averageSkillScore) / 100)
+        const recentAvgWinScore = Math.max(4000, Math.round(baseline.avgWinScore * (0.65 + (averageSkillScore / 100) * 0.35)))
+        const recentBadWaitRiichiRate = Number(Math.min(50, Math.max(15, baseline.badWaitRiichiRate + (scoreDropFactor * 22))).toFixed(1))
+        const recentHalfHeartedDealInRate = Number(Math.min(30, Math.max(5, (dealInRate * 0.75))).toFixed(1))
+
+        const tiltDiagnosis = this.styleEvaluator.diagnoseTilt({
+            baseline,
+            recent: {
+                avgWinScore: recentAvgWinScore,
+                badWaitRiichiRate: recentBadWaitRiichiRate,
+                halfHeartedDealInRate: recentHalfHeartedDealInRate
+            },
+            slumpGameCount: count,
+            gameMode: mode
+        })
+
         return {
             windowSize,
             gameMode: mode,
@@ -392,7 +410,8 @@ export class AnalysisService {
             initiativeRate,
             uradoraRate,
             styleDiagnosis,
-            slumpSeverity
+            slumpSeverity,
+            tiltDiagnosis
         }
     }
 
@@ -434,13 +453,24 @@ export class AnalysisService {
 
         const is3P = is3PRoom(game.roomType) || game.participants.length === 3
 
+        let tiltDiagnosis: TiltDiagnosisResult | undefined
+        const effectiveAccountId = accountId ?? game.participants[0]?.player?.accountId
+        if (effectiveAccountId !== undefined) {
+            try {
+                const rolling = await this.getRollingStats(effectiveAccountId, 100, is3P ? '3p' : '4p')
+                tiltDiagnosis = rolling.tiltDiagnosis
+            } catch {
+                // Ignore rolling stats lookup failure
+            }
+        }
+
         if (game.rawProtobuf && game.rawProtobuf.length > 0) {
             const decoder = new LiqiBinaryDecoder()
             const record = decoder.decode(game.rawProtobuf)
-            return this.coachingAdvisor.analyzeGame(record, targetSeat, is3P)
+            return this.coachingAdvisor.analyzeGame(record, targetSeat, is3P, tiltDiagnosis)
         }
 
-        return this.synthesizeCoachingReport(game, targetSeat, is3P)
+        return this.synthesizeCoachingReport(game, targetSeat, is3P, tiltDiagnosis)
     }
 
     protected synthesizeCoachingReport(
@@ -470,7 +500,8 @@ export class AnalysisService {
             }[]
         },
         targetSeat: SeatIndex,
-        is3P: boolean
+        is3P: boolean,
+        tiltDiagnosis?: TiltDiagnosisResult
     ): GameCoachingReport {
         /*_ GEMINI THINKING _*/
         const participant = game.participants.find((p) => p.seat === targetSeat)
@@ -494,8 +525,11 @@ export class AnalysisService {
 
             if (metric.dealInScore > 0) {
                 dealInCount++
-                const category: MistakeCategory = metric.dealInScore >= 8000 ? 'RECKLESS_PUSH_DEAL_IN' : 'DANGEROUS_MUSUJI_PUSH'
+                const category: MistakeCategory = is3P
+                    ? 'DANGER_PUSH_LOW_EV'
+                    : (metric.dealInScore >= 8000 ? 'RECKLESS_PUSH_DEAL_IN' : 'DANGEROUS_MUSUJI_PUSH')
                 const severity = Math.min(100, Math.max(80, Math.round(80 + (metric.dealInScore / 1000))))
+                const evLoss = metric.dealInScore
                 mistakes.push({
                     roundIndex: round.roundIndex,
                     turnNumber: 9,
@@ -507,11 +541,15 @@ export class AnalysisService {
                     actualUkeire: 4,
                     mistakeCategory: category,
                     severityScore: severity,
-                    coachingMessageKo: `[${round.roundIndex + 1}국] 상대의 선제 리치 상황에서 안전패 [1z]가 손패에 있었으나, 1-샹텐 상태에서 위험한 무스지패 [5p]를 무리하게 승부하다가 ${metric.dealInScore.toLocaleString()}점 방총되었습니다. 텐파이가 아니라면 현물 또는 안전패를 내며 수비(베타오리)하는 것이 기대값이 훨씬 높습니다.`
+                    coachingMessageKo: is3P
+                        ? `[${round.roundIndex + 1}국] 3P 대국에서 1-샹텐 노텐 상태로 상대 리치에 위험한 무스지패 [5p]를 무리하게 승부하다가 ${metric.dealInScore.toLocaleString()}점 방총되었습니다 (기대치 손실 약 -${metric.dealInScore.toLocaleString()}점). 만관 확정 리치에는 안전패 [1z]를 내며 철저히 베타오리해야 합니다.`
+                        : `[${round.roundIndex + 1}국] 상대의 선제 리치 상황에서 안전패 [1z]가 손패에 있었으나, 1-샹텐 상태에서 위험한 무스지패 [5p]를 무리하게 승부하다가 ${metric.dealInScore.toLocaleString()}점 방총되었습니다. 텐파이가 아니라면 현물 또는 안전패를 내며 수비(베타오리)하는 것이 기대값이 훨씬 높습니다.`,
+                    evLoss
                 })
             } else if (metric.tileEfficiency < 0.70) {
                 const category: MistakeCategory = 'UKEIRE_LOSS'
                 const severity = Math.min(75, Math.max(40, Math.round(40 + (1 - metric.tileEfficiency) * 50)))
+                const evLoss = Math.round((12 - 4) * (is3P ? 200 : 160))
                 mistakes.push({
                     roundIndex: round.roundIndex,
                     turnNumber: 6,
@@ -523,11 +561,13 @@ export class AnalysisService {
                     actualUkeire: 4,
                     mistakeCategory: category,
                     severityScore: severity,
-                    coachingMessageKo: `[${round.roundIndex + 1}국] 조패 과정에서 유효패를 좁히는 타패 [2s]를 선택하여 텐파이 속도가 지연되었습니다. 반대편 고립패 [9s]를 정리하는 것이 유효패 매수를 8장 더 넓혀 빠른 선제 공격에 유리했습니다.`
+                    coachingMessageKo: `[${round.roundIndex + 1}국] 조패 과정에서 유효패를 좁히는 타패 [2s]를 선택하여 텐파이 속도가 지연되었습니다. 반대편 고립패 [9s]를 정리하는 것이 유효패 매수를 8장 더 넓혀 빠른 선제 공격에 유리했습니다.`,
+                    evLoss
                 })
             } else if (metric.startShanten >= 4 && metric.tileEfficiency < 0.85) {
                 const category: MistakeCategory = 'SHANTEN_RETREAT'
                 const retreatTile = is3P ? '3s' : '3m'
+                const evLoss = 2100
                 mistakes.push({
                     roundIndex: round.roundIndex,
                     turnNumber: 4,
@@ -539,12 +579,23 @@ export class AnalysisService {
                     actualUkeire: 4,
                     mistakeCategory: category,
                     severityScore: 60,
-                    coachingMessageKo: `[${round.roundIndex + 1}국] 악배패 상태에서 조패 불균형으로 인해 샹텐수가 후퇴하는 타패 [${retreatTile}]를 선택했습니다. 안전한 자패를 먼저 털며 타점을 가늠하는 것이 바람직했습니다.`
+                    coachingMessageKo: `[${round.roundIndex + 1}국] 악배패 상태에서 조패 불균형으로 인해 샹텐수가 후퇴하는 타패 [${retreatTile}]를 선택했습니다. 안전한 자패를 먼저 털며 타점을 가늠하는 것이 바람직했습니다.`,
+                    evLoss
                 })
             }
         }
 
-        mistakes.sort((a, b) => b.severityScore - a.severityScore)
+        mistakes.sort((a, b) => {
+            const aCritical = (a.evLoss ?? 0) >= 2500
+            const bCritical = (b.evLoss ?? 0) >= 2500
+            if (aCritical !== bCritical) {
+                return aCritical ? -1 : 1
+            }
+            if (aCritical && bCritical) {
+                return (b.evLoss ?? 0) - (a.evLoss ?? 0)
+            }
+            return b.severityScore - a.severityScore
+        })
         const criticalMistakes = mistakes.slice(0, 3)
 
         let overallSummaryKo = ''
@@ -558,12 +609,25 @@ export class AnalysisService {
             overallSummaryKo = '공수 판단에서 위험 타패가 여러 차례 발생했으나 상대방의 화료 불발과 행운으로 순위를 방어한 대국입니다. 복기를 통해 위험 타패를 보완해야 장기적인 성적 향상이 가능합니다.'
         }
 
+        if (criticalMistakes.some((m) => (m.evLoss ?? 0) >= 2500)) {
+            overallSummaryKo += ' 특히 2,500점을 초과하는 치명적 EV Loss 스파이크가 감지되었으니 일치율(A- 평점)에 안주하지 말고 고위험 국면의 공수 판단을 점검하세요.'
+        }
+
         const actionableAdviceKo: string[] = []
         if (dealInCount > 0) {
             actionableAdviceKo.push('상대 리치 선언 시 텐파이가 아니면 무조건 안전패(현물/스지)를 내어 방총률을 억제하세요.')
         }
+        if (criticalMistakes.some((m) => m.mistakeCategory === 'DANGER_PUSH_LOW_EV')) {
+            actionableAdviceKo.push('3P 대국에서는 노텐 또는 저타점 상태에서 상대 만관 확정 리치에 위험패를 미는 것이 치명적인 기대치 손실(EV Loss > 2,500점)의 주원인입니다. 만관 리치에는 철저한 베타오리를 유지하세요.')
+        }
+        if (criticalMistakes.some((m) => m.mistakeCategory === 'TIMID_FOLD_HIGH_EV')) {
+            actionableAdviceKo.push('하네만·배만급 고화료 텐파이 상태에서는 상대 리치가 걸려 있어도 푸시하는 기대값(+EV)이 물러서는 것보다 월등히 높습니다. 과도한 방총 공포를 극복하고 승부하세요.')
+        }
         if (criticalMistakes.some((m) => m.mistakeCategory === 'UKEIRE_LOSS')) {
             actionableAdviceKo.push('초반 1~6순에서는 고립 1·9패와 자패를 먼저 정돈하여 양면 형태(2-3, 7-8)를 남기세요.')
+        }
+        if (tiltDiagnosis && tiltDiagnosis.isTilt) {
+            actionableAdviceKo.push(`[틸트 경고] ${tiltDiagnosis.advice}`)
         }
         if (actionableAdviceKo.length === 0) {
             actionableAdviceKo.push('현재의 높은 타패 효율을 유지하되, 고타점 직격 기회에서 다마텐과 리치의 공수 밸런스를 더욱 정교화하세요.')
@@ -576,7 +640,8 @@ export class AnalysisService {
             quadrant,
             criticalMistakes,
             overallSummaryKo,
-            actionableAdviceKo
+            actionableAdviceKo,
+            ...(tiltDiagnosis ? { tiltDiagnosis } : {})
         }
     }
 }

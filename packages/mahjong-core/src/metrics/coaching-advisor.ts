@@ -3,7 +3,8 @@ import {
     PerformanceQuadrant,
     MistakeCategory,
     CriticalMistakeHighlight,
-    GameCoachingReport
+    GameCoachingReport,
+    TiltDiagnosisResult
 } from '@mahjong-sensei/types'
 import { MajsoulGameRecord, MajsoulRoundRecord } from '../parser/types'
 import { ShantenCalculator } from '../shanten'
@@ -12,7 +13,7 @@ import { LuckEvaluator } from './luck-evaluator'
 import { SkillEvaluator } from './skill-evaluator'
 import { TILE_NAMES, TileConverter } from '../tiles'
 
-export type { MistakeCategory, CriticalMistakeHighlight, GameCoachingReport }
+export type { MistakeCategory, CriticalMistakeHighlight, GameCoachingReport, TiltDiagnosisResult }
 
 
 export interface OptimalDiscardResult {
@@ -30,7 +31,8 @@ export interface MistakeFeedbackParams {
     readonly afterShanten: number
     readonly optimalUkeire: number
     readonly actualUkeire: number
-    readonly roundIndex?: number
+    readonly roundIndex?: number | undefined
+    readonly evLoss?: number | undefined
 }
 
 interface DiscardCandidate {
@@ -49,7 +51,8 @@ export class CoachingAdvisor {
     public analyzeGame(
         gameRecord: MajsoulGameRecord,
         targetSeat: SeatIndex,
-        is3P?: boolean
+        is3P?: boolean,
+        tiltDiagnosis?: TiltDiagnosisResult
     ): GameCoachingReport {
         const isThreePlayer = is3P ?? (
             gameRecord.players.length === 3 ||
@@ -81,11 +84,22 @@ export class CoachingAdvisor {
         const avgSkill = totalSkill / roundCount
         const quadrant = this.metricCalculator.classifyQuadrant(avgLuck, avgSkill)
 
-        allMistakes.sort((a, b) => b.severityScore - a.severityScore)
+        // 일치율(A- 평점)에 가려지는 단 1~2회의 치명적 타패(기대치 손실 > 2,500점) 선별
+        allMistakes.sort((a, b) => {
+            const aCritical = (a.evLoss ?? 0) >= 2500
+            const bCritical = (b.evLoss ?? 0) >= 2500
+            if (aCritical !== bCritical) {
+                return aCritical ? -1 : 1
+            }
+            if (aCritical && bCritical) {
+                return (b.evLoss ?? 0) - (a.evLoss ?? 0)
+            }
+            return b.severityScore - a.severityScore
+        })
         const criticalMistakes = allMistakes.slice(0, 3)
 
         const overallSummaryKo = this.buildOverallSummary(quadrant, criticalMistakes, isThreePlayer)
-        const actionableAdviceKo = this.buildActionableAdvice(criticalMistakes, isThreePlayer)
+        const actionableAdviceKo = this.buildActionableAdvice(criticalMistakes, isThreePlayer, tiltDiagnosis)
 
         return {
             gameId: gameRecord.uuid,
@@ -94,7 +108,8 @@ export class CoachingAdvisor {
             quadrant,
             criticalMistakes,
             overallSummaryKo,
-            actionableAdviceKo
+            actionableAdviceKo,
+            ...(tiltDiagnosis ? { tiltDiagnosis } : {})
         }
     }
 
@@ -120,6 +135,7 @@ export class CoachingAdvisor {
         let lastDiscardedTile: string | null = null
         let targetTurnNumber = 0
         let targetMeldCount = 0
+        let targetKitaCount = 0
         let isTargetInRiichi = false
 
         const chang = round.header.chang ?? 0
@@ -288,35 +304,75 @@ export class CoachingAdvisor {
                             seatWind
                         )
 
+                        let handDoraCount = 0
+                        for (const t of currentHand) {
+                            handDoraCount += this.getTileDoraValue(t, doraIndicators, is3P)
+                        }
+                        const totalDorasAndKitas = handDoraCount + targetKitaCount
+
                         let mistakeCategory: MistakeCategory | null = null
                         let severityScore = 0
                         let chosenOptimalTile = optimalResult.tile
                         let chosenOptimalUkeire = optimalResult.ukeire
+                        let evLoss: number | undefined
+
+                        const isHighValueTenpai = prevShanten === 0 && (is3P ? totalDorasAndKitas >= 3 : totalDorasAndKitas >= 4)
+                        const isCheapOrNoten = prevShanten >= 1 || (prevShanten === 0 && totalDorasAndKitas <= 1)
 
                         if (
+                            activeRiichiSeats.size > 0 &&
+                            isHighValueTenpai &&
+                            discardSafety >= 0.85 &&
+                            afterShanten > prevShanten &&
+                            optimalResult.shanten === 0
+                        ) {
+                            // TIMID_FOLD_HIGH_EV: 고화료(하네만/배만) 텐파이에서 지나친 방총 공포로 내려서 유효 화료 기회 상실
+                            const handValue = totalDorasAndKitas >= 6 ? 16000 : 12000
+                            evLoss = Math.round(handValue * 0.35)
+                            mistakeCategory = 'TIMID_FOLD_HIGH_EV'
+                            severityScore = Math.min(95, Math.max(80, Math.round(80 + (evLoss / 500))))
+                            chosenOptimalTile = optimalResult.tile
+                            chosenOptimalUkeire = optimalResult.ukeire
+                        } else if (
                             didDealIn &&
                             activeRiichiSeats.size > 0 &&
                             prevShanten >= 1 &&
                             safestTileInHand !== null &&
                             maxSafetyInHand >= 0.85
                         ) {
-                            mistakeCategory = 'RECKLESS_PUSH_DEAL_IN'
+                            evLoss = Math.max(dealInPoints, is3P ? 8000 : 0)
+                            if (is3P && isCheapOrNoten) {
+                                mistakeCategory = 'DANGER_PUSH_LOW_EV'
+                            } else {
+                                mistakeCategory = 'RECKLESS_PUSH_DEAL_IN'
+                            }
                             severityScore = Math.min(100, Math.max(85, Math.round(85 + (dealInPoints / 1000))))
                             chosenOptimalTile = safestTileInHand
                             chosenOptimalUkeire = bestSafeUkeire
                         } else if (
                             activeRiichiSeats.size > 0 &&
-                            prevShanten >= 1 &&
-                            discardSafety <= 0.50 &&
                             safestTileInHand !== null &&
-                            maxSafetyInHand >= 0.85
+                            maxSafetyInHand >= 0.85 &&
+                            discardSafety <= 0.50 &&
+                            (is3P ? (prevShanten >= 1 || (prevShanten === 0 && totalDorasAndKitas === 0)) : (prevShanten >= 1))
                         ) {
-                            mistakeCategory = 'DANGEROUS_MUSUJI_PUSH'
-                            severityScore = Math.min(90, Math.max(70, Math.round(70 + (prevShanten * 5) + ((1.0 - discardSafety) * 15))))
+                            const dealInRisk = (1.0 - discardSafety) * (is3P ? 9000 : 8000)
+                            const winPotential = prevShanten === 0 ? 500 : 0
+                            const calculatedEvLoss = Math.round(dealInRisk - winPotential)
+                            evLoss = calculatedEvLoss
+
+                            if (is3P && calculatedEvLoss >= 2500) {
+                                mistakeCategory = 'DANGER_PUSH_LOW_EV'
+                                severityScore = Math.min(95, Math.max(75, Math.round(75 + ((1.0 - discardSafety) * 20) + (prevShanten * 5))))
+                            } else {
+                                mistakeCategory = 'DANGEROUS_MUSUJI_PUSH'
+                                severityScore = Math.min(90, Math.max(70, Math.round(70 + (prevShanten * 5) + ((1.0 - discardSafety) * 15))))
+                            }
                             chosenOptimalTile = safestTileInHand
                             chosenOptimalUkeire = bestSafeUkeire
                         } else if (afterShanten > prevShanten && optimalResult.shanten <= prevShanten) {
                             mistakeCategory = 'SHANTEN_RETREAT'
+                            evLoss = Math.round(1500 + Math.max(0, 10 - targetTurnNumber) * 100)
                             severityScore = Math.min(85, Math.max(50, 75 - (Math.min(2, prevShanten) * 10)))
                         } else if (
                             afterShanten === prevShanten &&
@@ -324,6 +380,7 @@ export class CoachingAdvisor {
                             this.normalizeTile(action.tile) !== this.normalizeTile(optimalResult.tile)
                         ) {
                             mistakeCategory = 'UKEIRE_LOSS'
+                            evLoss = Math.round((optimalResult.ukeire - actualUkeire) * (is3P ? 200 : 160))
                             severityScore = Math.min(70, Math.max(25, Math.round(30 + ((optimalResult.ukeire - actualUkeire) * 2.5))))
                         }
 
@@ -337,7 +394,8 @@ export class CoachingAdvisor {
                                 afterShanten,
                                 optimalUkeire: chosenOptimalUkeire,
                                 actualUkeire,
-                                roundIndex
+                                roundIndex,
+                                evLoss
                             })
 
                             mistakes.push({
@@ -351,7 +409,8 @@ export class CoachingAdvisor {
                                 actualUkeire,
                                 mistakeCategory,
                                 severityScore,
-                                coachingMessageKo
+                                coachingMessageKo,
+                                evLoss
                             })
                         }
                     }
@@ -455,6 +514,7 @@ export class CoachingAdvisor {
                 seenDoraCount = this.syncRevealedDoras(action.doras, doraIndicators, visibleCounts, seenDoraCount)
                 this.addVisibleTile('4z', visibleCounts)
                 if (action.seat === targetSeat) {
+                    targetKitaCount++
                     const idx = currentHand.indexOf('4z')
                     if (idx !== -1) {
                         currentHand.splice(idx, 1)
@@ -761,7 +821,8 @@ export class CoachingAdvisor {
         prevShanten?: number,
         afterShanten?: number,
         optimalUkeire?: number,
-        actualUkeire?: number
+        actualUkeire?: number,
+        evLossParam?: number
     ): string {
         let category: MistakeCategory
         let turn: number
@@ -771,6 +832,7 @@ export class CoachingAdvisor {
         let after: number
         let optUk: number
         let actUk: number
+        let evLoss: number | undefined
 
         if (typeof categoryOrParams === 'object') {
             category = categoryOrParams.category
@@ -781,6 +843,7 @@ export class CoachingAdvisor {
             after = categoryOrParams.afterShanten
             optUk = categoryOrParams.optimalUkeire
             actUk = categoryOrParams.actualUkeire
+            evLoss = categoryOrParams.evLoss
         } else {
             category = categoryOrParams
             turn = turnNumber ?? 1
@@ -790,6 +853,7 @@ export class CoachingAdvisor {
             after = afterShanten ?? 0
             optUk = optimalUkeire ?? 0
             actUk = actualUkeire ?? 0
+            evLoss = evLossParam
         }
 
         switch (category) {
@@ -801,6 +865,14 @@ export class CoachingAdvisor {
                 return `상대 리치 선언 후 ${turn}순목에 위험패 [${discarded}]을(를) 버려 방총되었습니다. 리치에 맞서 텐파이가 아니라면 안전패 [${optimal}]을(를) 버리며 수비(베타오리)해야 합니다.`
             case 'DANGEROUS_MUSUJI_PUSH':
                 return `상대 리치 상황에서 ${turn}순목에 텐파이가 아님에도(${prev}샹텐) 위험한 무스지 [${discarded}]을(를) 밀었습니다. 안전패 [${optimal}]을(를) 버리며 내리는 판단이 안전합니다.`
+            case 'DANGER_PUSH_LOW_EV': {
+                const lossStr = evLoss !== undefined && evLoss > 0 ? `(기대치 손실 약 -${Math.round(evLoss).toLocaleString()}점)` : ''
+                return `${turn}순목에 싼 패/노텐(${prev > 0 ? `${prev}샹텐` : '저타점'}) 상태에서 상대 만관 확정 리치에 위험패 [${discarded}]을(를) 푸시했습니다${lossStr ? ` ${lossStr}` : ''}. 안전패 [${optimal}]을(를) 내며 베타오리하는 것이 기대값상 필수적입니다.`
+            }
+            case 'TIMID_FOLD_HIGH_EV': {
+                const lossStr = evLoss !== undefined && evLoss > 0 ? `(기대치 손실 약 -${Math.round(evLoss).toLocaleString()}점)` : ''
+                return `상대 리치에 대한 과도한 방총 공포로 ${turn}순목에 고화료(하네만/배만) 텐파이를 포기하고 안전패 [${discarded}]을(를) 버리며 내렸습니다${lossStr ? ` ${lossStr}` : ''}. 고타점 텐파이는 리치 상대로도 밀었을 때의 기대값(+EV)이 압도적이므로 물러서지 않고 승부해야 합니다.`
+            }
         }
     }
 
@@ -980,17 +1052,28 @@ export class CoachingAdvisor {
             return `${modeLabel} 대국 분석 결과, 이번 대국은 ${quadrantDesc} 국면이었습니다. 전반적으로 무리한 타패나 패 효율 손실 없이 매우 안정적인 공수 밸런스를 보여주었습니다.`
         }
 
+        if (criticalMistakes.some((m) => (m.evLoss ?? 0) >= 2500)) {
+            return `${modeLabel} 대국 분석 결과, 이번 대국은 ${quadrantDesc} 국면이었습니다. 총 ${criticalMistakes.length}건의 주요 개선 타패 중 기대치 손실이 2,500점을 초과하는 치명적 EV Loss 스파이크가 감지되었습니다. 일치율(A- 평점)에 안주하지 말고 고위험 국면의 공수 판단을 점검하세요.`
+        }
+
         return `${modeLabel} 대국 분석 결과, 이번 대국은 ${quadrantDesc} 국면이었습니다. 총 ${criticalMistakes.length}건의 주요 개선 타패가 감지되었으며, 특히 리치 대응 수비와 패 효율 극대화에 유의하면 실력을 더욱 향상시킬 수 있습니다.`
     }
 
     /*_ GEMINI THINKING _*/
     private buildActionableAdvice(
         criticalMistakes: readonly CriticalMistakeHighlight[],
-        is3P: boolean
+        is3P: boolean,
+        tiltDiagnosis?: TiltDiagnosisResult
     ): readonly string[] {
         const advice: string[] = []
         const categories = new Set(criticalMistakes.map((m) => m.mistakeCategory))
 
+        if (categories.has('DANGER_PUSH_LOW_EV')) {
+            advice.push('3P 대국에서는 노텐 또는 저타점 상태에서 상대 만관 확정 리치에 위험패를 미는 것이 치명적인 기대치 손실(EV Loss > 2,500점)의 주원인입니다. 만관 리치에는 철저한 베타오리를 유지하세요.')
+        }
+        if (categories.has('TIMID_FOLD_HIGH_EV')) {
+            advice.push('하네만·배만급 고화료 텐파이 상태에서는 상대 리치가 걸려 있어도 푸시하는 기대값(+EV)이 물러서는 것보다 월등히 높습니다. 과도한 방총 공포를 극복하고 승부하세요.')
+        }
         if (categories.has('RECKLESS_PUSH_DEAL_IN')) {
             advice.push('상대 리치 선언 시 텐파이가 아니라면 현물(Genbutsu)과 스지 안전패를 최우선으로 타패하여 방총을 방지하세요.')
         }
@@ -1005,6 +1088,10 @@ export class CoachingAdvisor {
         }
         if (is3P) {
             advice.push('3인 마작은 타점과 진행 속도가 매우 빠르므로, 무스지 방총 한 번이 대국 순위에 치명적인 영향을 줍니다.')
+        }
+
+        if (tiltDiagnosis && tiltDiagnosis.isTilt) {
+            advice.push(`[틸트 경고] ${tiltDiagnosis.advice}`)
         }
 
         if (advice.length === 0) {
