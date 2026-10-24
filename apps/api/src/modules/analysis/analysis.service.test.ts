@@ -61,6 +61,9 @@ test('AnalysisService - Return zero defaults when no games found for account', a
     assert.strictEqual(stats.initiativeRate, 0)
     assert.strictEqual(stats.uradoraRate, 0)
     assert.strictEqual(stats.games.length, 0)
+    assert.strictEqual(stats.slumpSeverity?.status, 'NORMAL')
+    assert.strictEqual(stats.slumpSeverity?.zScore, 0)
+    assert.strictEqual(stats.slumpSeverity?.percentile, 50.0)
 })
 
 test('AnalysisService - Aggregate window metrics, compute rates, and evaluate style', async () => {
@@ -143,6 +146,45 @@ test('AnalysisService - Aggregate window metrics, compute rates, and evaluate st
     assert.ok(stats.styleDiagnosis.defenseType.length > 0)
     assert.strictEqual(stats.styleDiagnosis.defenseType, '철벽 수비')
     assert.strictEqual(stats.styleDiagnosis.skillRemark, '3마 상위 5% 철벽 수비')
+
+    // Check Slump Severity presence
+    assert.ok(stats.slumpSeverity !== undefined)
+    assert.strictEqual(stats.slumpSeverity.status, 'NORMAL')
+    assert.ok(stats.slumpSeverity.message.length > 0)
+})
+
+test('AnalysisService - Computes slumpSeverity for severe bad run in rolling window', async () => {
+    const service = new MockAnalysisService()
+    // 10 games with nine 3rd places and one 2nd place in 3P
+    const mockGames: ParticipantWithGameRounds[] = []
+    let i = 0
+    while (i < 10) {
+        mockGames.push({
+            id: `p-${i}`,
+            gameId: `game-slump-${i}`,
+            playerId: 'player-1',
+            seat: 0 as SeatIndex,
+            finalScore: 15000,
+            finalRank: i === 0 ? 2 : 3,
+            luckScore: 20,
+            skillScore: 50,
+            game: {
+                id: `game-slump-${i}`,
+                roomType: '3인 옥탁 동풍전',
+                gameDate: new Date(1720000000000 + i * 3600000),
+                rounds: []
+            }
+        })
+        i++
+    }
+    service.mockParticipants = mockGames
+
+    const stats = await service.getRollingStats(10001, 10, '3p')
+    assert.ok(stats.slumpSeverity !== undefined)
+    assert.ok(stats.slumpSeverity.status === 'SEVERE_HARFUKA' || stats.slumpSeverity.status === 'HELL_MODE')
+    assert.ok(stats.slumpSeverity.zScore < -2.0)
+    assert.ok(stats.slumpSeverity.percentile < 5.0)
+    assert.ok(stats.slumpSeverity.occurrenceProbability < 1.0)
 })
 
 test('AnalysisService - Zero denominator fallbacks for damaten, initiative, and uradora rates', async () => {
