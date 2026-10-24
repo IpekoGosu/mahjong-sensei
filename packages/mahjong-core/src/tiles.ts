@@ -8,10 +8,14 @@ export const TILE_NAMES: readonly string[] = [
 ]
 
 export class TileConverter {
+    public static normalizeTile(tileStr: string): string {
+        return tileStr.replace('0m', '5m').replace('0p', '5p').replace('0s', '5s')
+    }
+
     public static tileStringToId(tileStr: string): number {
         /*_ GEMINI THINKING _*/
         // Normalize red fives: '0m' -> '5m', '0p' -> '5p', '0s' -> '5s'
-        const normalized = tileStr.replace('0m', '5m').replace('0p', '5p').replace('0s', '5s')
+        const normalized = TileConverter.normalizeTile(tileStr)
         const index = TILE_NAMES.indexOf(normalized)
         if (index === -1) {
             throw new Error(`Invalid tile string: ${tileStr}`)
@@ -43,7 +47,7 @@ export class TileConverter {
 
     /*_ GEMINI THINKING _*/
     public static getNextDoraTile(indicator: string, is3P: boolean = false): string {
-        const norm = indicator.replace('0m', '5m').replace('0p', '5p').replace('0s', '5s')
+        const norm = TileConverter.normalizeTile(indicator)
         const suit = norm.slice(-1)
         const val = Number.parseInt(norm.slice(0, -1), 10)
 
