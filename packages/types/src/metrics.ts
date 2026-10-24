@@ -196,15 +196,15 @@ export interface TiltMetricsComparison {
     readonly avgWinScore: number
     readonly badWaitRiichiRate: number
     readonly halfHeartedDealInRate: number
-    readonly doraDischargeRate?: number
-    readonly earlyFuroRate?: number
+    readonly doraDischargeRate?: number | undefined
+    readonly earlyFuroRate?: number | undefined
 }
 
 export interface TiltEvaluationInput {
     readonly baseline: TiltMetricsComparison
     readonly recent: TiltMetricsComparison
-    readonly slumpGameCount?: number
-    readonly gameMode?: GameMode
+    readonly slumpGameCount?: number | undefined
+    readonly gameMode?: GameMode | undefined
 }
 
 export interface CriticalMistakeHighlight {

@@ -318,13 +318,17 @@ export class CoachingAdvisor {
 
                         const isHighValueTenpai = prevShanten === 0 && (is3P ? totalDorasAndKitas >= 3 : totalDorasAndKitas >= 4)
                         const isCheapOrNoten = prevShanten >= 1 || (prevShanten === 0 && totalDorasAndKitas <= 1)
+                        const hasActiveRiichi = activeRiichiSeats.size > 0
 
                         if (
-                            activeRiichiSeats.size > 0 &&
-                            isHighValueTenpai &&
-                            discardSafety >= 0.85 &&
-                            afterShanten > prevShanten &&
-                            optimalResult.shanten === 0
+                            this.isTimidFoldViolation(
+                                hasActiveRiichi,
+                                isHighValueTenpai,
+                                discardSafety,
+                                afterShanten,
+                                prevShanten,
+                                optimalResult.shanten
+                            )
                         ) {
                             // TIMID_FOLD_HIGH_EV: 고화료(하네만/배만) 텐파이에서 지나친 방총 공포로 내려서 유효 화료 기회 상실
                             const handValue = totalDorasAndKitas >= 6 ? 16000 : 12000
@@ -334,11 +338,13 @@ export class CoachingAdvisor {
                             chosenOptimalTile = optimalResult.tile
                             chosenOptimalUkeire = optimalResult.ukeire
                         } else if (
-                            didDealIn &&
-                            activeRiichiSeats.size > 0 &&
-                            prevShanten >= 1 &&
                             safestTileInHand !== null &&
-                            maxSafetyInHand >= 0.85
+                            this.isRecklessDealInViolation(
+                                didDealIn,
+                                hasActiveRiichi,
+                                prevShanten,
+                                maxSafetyInHand
+                            )
                         ) {
                             evLoss = Math.max(dealInPoints, is3P ? 8000 : 0)
                             if (is3P && isCheapOrNoten) {
@@ -350,11 +356,15 @@ export class CoachingAdvisor {
                             chosenOptimalTile = safestTileInHand
                             chosenOptimalUkeire = bestSafeUkeire
                         } else if (
-                            activeRiichiSeats.size > 0 &&
                             safestTileInHand !== null &&
-                            maxSafetyInHand >= 0.85 &&
-                            discardSafety <= 0.50 &&
-                            (is3P ? (prevShanten >= 1 || (prevShanten === 0 && totalDorasAndKitas === 0)) : (prevShanten >= 1))
+                            this.isCriticalSafetyViolation(
+                                hasActiveRiichi,
+                                maxSafetyInHand,
+                                discardSafety,
+                                prevShanten,
+                                totalDorasAndKitas,
+                                is3P
+                            )
                         ) {
                             const dealInRisk = (1.0 - discardSafety) * (is3P ? 9000 : 8000)
                             const winPotential = prevShanten === 0 ? 500 : 0
@@ -874,6 +884,57 @@ export class CoachingAdvisor {
                 return `상대 리치에 대한 과도한 방총 공포로 ${turn}순목에 고화료(하네만/배만) 텐파이를 포기하고 안전패 [${discarded}]을(를) 버리며 내렸습니다${lossStr ? ` ${lossStr}` : ''}. 고타점 텐파이는 리치 상대로도 밀었을 때의 기대값(+EV)이 압도적이므로 물러서지 않고 승부해야 합니다.`
             }
         }
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected isTimidFoldViolation(
+        hasActiveRiichi: boolean,
+        isHighValueTenpai: boolean,
+        discardSafety: number,
+        afterShanten: number,
+        prevShanten: number,
+        optimalShanten: number
+    ): boolean {
+        return (
+            hasActiveRiichi &&
+            isHighValueTenpai &&
+            discardSafety >= 0.85 &&
+            afterShanten > prevShanten &&
+            optimalShanten === 0
+        )
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected isRecklessDealInViolation(
+        didDealIn: boolean,
+        hasActiveRiichi: boolean,
+        prevShanten: number,
+        maxSafetyInHand: number
+    ): boolean {
+        return (
+            didDealIn &&
+            hasActiveRiichi &&
+            prevShanten >= 1 &&
+            maxSafetyInHand >= 0.85
+        )
+    }
+
+    /*_ GEMINI THINKING _*/
+    protected isCriticalSafetyViolation(
+        hasActiveRiichi: boolean,
+        maxSafetyInHand: number,
+        discardSafety: number,
+        prevShanten: number,
+        totalDorasAndKitas: number,
+        is3P: boolean
+    ): boolean {
+        if (!hasActiveRiichi || maxSafetyInHand < 0.85 || discardSafety > 0.50) {
+            return false
+        }
+        if (is3P) {
+            return prevShanten >= 1 || (prevShanten === 0 && totalDorasAndKitas === 0)
+        }
+        return prevShanten >= 1
     }
 
     /*_ GEMINI THINKING _*/

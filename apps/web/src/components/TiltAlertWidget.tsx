@@ -20,6 +20,17 @@ export const TiltAlertWidget: React.FC<TiltAlertWidgetProps> = ({
 
     const { isTilt, tiltScore, severity, title, summary, advice, symptoms } = tiltDiagnosis
 
+    const formattedSymptoms = React.useMemo(() => {
+        return symptoms.map((symptom) => {
+            const bracketIndex = symptom.label.indexOf(' (')
+            const displayTitle = bracketIndex !== -1 ? symptom.label.slice(0, bracketIndex) : symptom.label
+            return {
+                ...symptom,
+                displayTitle
+            }
+        })
+    }, [symptoms])
+
     const getSeverityStyles = (sev: TiltSeverity): {
         readonly containerClass: string
         readonly badgeClass: string
@@ -127,7 +138,7 @@ export const TiltAlertWidget: React.FC<TiltAlertWidgetProps> = ({
                     틸트 3대 징후 감지 현황
                 </span>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-                    {symptoms.map((symptom) => (
+                    {formattedSymptoms.map((symptom) => (
                         <div
                             key={symptom.type}
                             className={`p-3 rounded-xl border transition-all text-xs space-y-1.5 ${
@@ -137,7 +148,7 @@ export const TiltAlertWidget: React.FC<TiltAlertWidgetProps> = ({
                             }`}
                         >
                             <div className="flex items-center justify-between gap-1">
-                                <span className="font-bold text-[11px] truncate">{symptom.label.split(' (')[0]}</span>
+                                <span className="font-bold text-[11px] truncate">{symptom.displayTitle}</span>
                                 {symptom.detected ? (
                                     <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
                                         감지됨
