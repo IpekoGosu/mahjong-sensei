@@ -399,6 +399,69 @@ test('AnalysisService - getCoachingReport generates synthetic coaching report fo
     assert.strictEqual(report.criticalMistakes[1]?.mistakeCategory, 'UKEIRE_LOSS')
     assert.ok(report.overallSummaryKo.includes('실력 점수가 난조'))
     assert.ok(report.actionableAdviceKo.length > 0)
+    assert.ok(report.situationScore !== undefined)
+})
+
+/*_ GEMINI THINKING _*/
+test('AnalysisService - getCoachingReport handles 3P Orasu 2nd defense failure in synthetic report', async () => {
+    const service = new MockAnalysisService()
+    service.mockGame = {
+        id: 'synthetic-3p-orasu-game',
+        roomType: '작혼 3인 남풍전 옥탁',
+        rawProtobuf: null,
+        participants: [
+            {
+                seat: 1,
+                finalScore: 22000,
+                finalRank: 3, // Dropped to 3rd (last)
+                luckScore: 40.0,
+                skillScore: 45.0,
+                player: { accountId: 10002, nickname: '삼마도사' }
+            }
+        ],
+        rounds: [
+            {
+                id: 'round-1',
+                roundIndex: 0,
+                roundMetrics: [
+                    {
+                        seat: 1,
+                        startShanten: 2.0,
+                        dealInScore: 0,
+                        tileEfficiency: 0.90,
+                        luckScore: 50,
+                        skillScore: 60,
+                        isWin: false,
+                        isRiichi: false
+                    }
+                ]
+            },
+            {
+                id: 'round-last',
+                roundIndex: 5, // South 3 (Orasu in 3P Hanchan)
+                roundMetrics: [
+                    {
+                        seat: 1,
+                        startShanten: 1.0,
+                        dealInScore: 8000, // Dealt in on final round
+                        tileEfficiency: 0.70,
+                        luckScore: 30,
+                        skillScore: 30,
+                        isWin: false,
+                        isRiichi: false
+                    }
+                ]
+            }
+        ]
+    }
+
+    const report = await service.getCoachingReport('synthetic-3p-orasu-game', 10002)
+    assert.strictEqual(report.is3P, true)
+    assert.strictEqual(report.targetSeat, 1)
+    assert.ok(report.situationScore !== undefined)
+    assert.ok(report.situationScore <= 40)
+    assert.strictEqual(report.orasuEvaluation?.droppedFrom2ndTo3rd, true)
+    assert.ok(report.actionableAdviceKo.some((advice) => advice.includes('3위(라스) 방어가 최우선')))
 })
 
 test('AnalysisService - getCoachingReport analyzes rawProtobuf game with CoachingAdvisor', async () => {

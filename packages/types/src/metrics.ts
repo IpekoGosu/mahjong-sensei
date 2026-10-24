@@ -210,6 +210,10 @@ export type MistakeCategory =
     | 'UKEIRE_LOSS'
     | 'RECKLESS_PUSH_DEAL_IN'
     | 'DANGEROUS_MUSUJI_PUSH'
+    | 'ORASU_FATAL_DEAL_IN'
+    | 'ORASU_SECOND_DEFENSE_FAILURE'
+    | 'HIGH_VALUE_RISK_DEAL_IN'
+    | 'KITA_DORA_DEAL_IN'
 
 export interface CriticalMistakeHighlight {
     readonly roundIndex: number
@@ -225,6 +229,13 @@ export interface CriticalMistakeHighlight {
     readonly coachingMessageKo: string
 }
 
+export interface OrasuSituationSummary {
+    readonly isOrasuEvaluated: boolean
+    readonly situationScore: number
+    readonly droppedFrom2ndTo3rd: boolean
+    readonly summaryKo: string
+}
+
 export interface GameCoachingReport {
     readonly gameId: string
     readonly targetSeat: SeatIndex
@@ -233,5 +244,7 @@ export interface GameCoachingReport {
     readonly criticalMistakes: readonly CriticalMistakeHighlight[]
     readonly overallSummaryKo: string
     readonly actionableAdviceKo: readonly string[]
+    readonly situationScore?: number | undefined
+    readonly orasuEvaluation?: OrasuSituationSummary | undefined
 }
 
